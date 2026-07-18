@@ -1,4 +1,5 @@
-#pragma once
+#ifndef DECIMAL_H_
+#define DECIMAL_H_
 
 #include <algorithm>
 #include <array>
@@ -9017,3 +9018,5 @@ inline const decimal decimal::ONE_TENTH = decimal::value_of(1LL, 1);
 
 // 常量 0.5, scale 为 1.
 inline const decimal decimal::ONE_HALF = decimal::value_of(5LL, 1);
+
+#endif  // DECIMAL_H_
