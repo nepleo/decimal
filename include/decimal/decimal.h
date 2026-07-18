@@ -184,7 +184,7 @@ struct math_context {
 
   // 返回 hash code.
   int hash_code() const {
-    return precision_ + (int)(rounding_mode_) * 59;
+    return precision_ + (int)(rounding_mode_)*59;
   }
 
   int precision_{0};
@@ -1782,7 +1782,7 @@ struct mutable_bigint {
     if (int_len_ == 0) {
       return 0;
     }
-    return (uint64_t)(int_len_) * 32 - number_of_leading_zeros(value_[offset_]);
+    return (uint64_t)(int_len_)*32 - number_of_leading_zeros(value_[offset_]);
   }
 
   // 将当前数右移 n bit,结果保持规范形式.
@@ -4713,7 +4713,7 @@ struct bigint {
 
     jarray<uint32_t> result(((to - from) >> 2) + 1);
 
-    uint32_t d0 = (uint32_t)(b) & 0xffU;
+    uint32_t d0 = (uint32_t)(b)&0xffU;
     while (((to - from) & 0x3) != 0) {
       d0 = (d0 << 8) | (a[from++] & 0xffU);
     }
@@ -4743,17 +4743,17 @@ struct bigint {
     for (; b == -1 && from < to; b = (int8_t)(a[from++])) {
     }
 
-    uint32_t d0 = (0xffffffffU << 8) | ((uint32_t)(b) & 0xffU);
+    uint32_t d0 = (0xffffffffU << 8) | ((uint32_t)(b)&0xffU);
     while (((to - from) & 0x3) != 0) {
       b = (int8_t)(a[from++]);
-      d0 = (d0 << 8) | ((uint32_t)(b) & 0xffU);
+      d0 = (d0 << 8) | ((uint32_t)(b)&0xffU);
     }
     const int32_t f = from;
 
     for (; b == 0 && from < to; b = (int8_t)(a[from++])) {
     }
 
-    uint32_t d = (uint32_t)(b) & 0xffU;
+    uint32_t d = (uint32_t)(b)&0xffU;
     while (((to - from) & 0x3) != 0) {
       d = (d << 8) | (a[from++] & 0xffU);
     }
