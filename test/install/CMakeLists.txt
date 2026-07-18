@@ -4,7 +4,7 @@ project(decimal_install_test LANGUAGES CXX)
 
 find_package(decimal 0.1 CONFIG REQUIRED)
 
-add_executable(decimal_install_test main.cpp)
+add_executable(decimal_install_test main.cc)
 target_link_libraries(decimal_install_test PRIVATE decimal::decimal)
 
 enable_testing()

@@ -44,7 +44,7 @@ int main() {
 ```cmake
 add_subdirectory(path/to/decimal)
 
-add_executable(my_app main.cpp)
+add_executable(my_app main.cc)
 target_link_libraries(my_app PRIVATE decimal::decimal)
 ```
 
@@ -68,7 +68,7 @@ Use the installed package from another project:
 ```cmake
 find_package(decimal 0.1 CONFIG REQUIRED)
 
-add_executable(my_app main.cpp)
+add_executable(my_app main.cc)
 target_link_libraries(my_app PRIVATE decimal::decimal)
 ```
 
