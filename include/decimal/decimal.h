@@ -47,7 +47,9 @@
 #define DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS 0
 #endif
 
-#if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && defined(__SIZEOF_INT128__)
+// clang-cl advertises __int128, but 128-bit division under the MSVC ABI can
+// require compiler runtime helpers that are not provided by the MSVC runtime.
+#if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && defined(__SIZEOF_INT128__) && !defined(_MSC_VER)
 #define DECIMAL_INTERNAL_HAS_NATIVE_INT128 1
 #else
 #define DECIMAL_INTERNAL_HAS_NATIVE_INT128 0
@@ -60,7 +62,9 @@
 #define DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS 0
 #endif
 
-#if DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS && defined(_M_X64) && _MSC_VER >= 1920
+// _udiv128 is provided by MSVC on x64, but not by clang-cl's intrin.h.
+#if DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS && defined(_M_X64) && !defined(__clang__) && \
+    !defined(__GNUC__) && _MSC_VER >= 1920
 #define DECIMAL_INTERNAL_HAS_MSVC_DIV128 1
 #else
 #define DECIMAL_INTERNAL_HAS_MSVC_DIV128 0
