@@ -14,22 +14,34 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: ${{ matrix.os }}
+    name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - name: GCC
+            os: ubuntu-latest
+            cmake_args: -DCMAKE_CXX_COMPILER=g++
+          - name: Clang
+            os: ubuntu-latest
+            cmake_args: -DCMAKE_CXX_COMPILER=clang++
+          - name: AppleClang
+            os: macos-latest
+            cmake_args: ""
+          - name: MSVC
+            os: windows-latest
+            cmake_args: ""
+          - name: clang-cl
+            os: windows-latest
+            cmake_args: -T ClangCL
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
       - name: Configure
-        run: cmake -S . -B build -DDECIMAL_BUILD_TESTS=ON -DDECIMAL_INSTALL=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/decimal-install"
+        run: cmake -S . -B build ${{ matrix.cmake_args }} -DDECIMAL_BUILD_TESTS=ON -DDECIMAL_INSTALL=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${{ runner.temp }}/decimal-install"
 
       - name: Build
         run: cmake --build build --config Release --parallel

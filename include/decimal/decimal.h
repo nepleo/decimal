@@ -21,6 +21,222 @@
 #include <utility>
 #include <vector>
 
+#if defined(DECIMAL_DISABLE_INTRINSICS) && DECIMAL_DISABLE_INTRINSICS
+#define DECIMAL_INTERNAL_INTRINSICS_DISABLED 1
+#else
+#define DECIMAL_INTERNAL_INTRINSICS_DISABLED 0
+#endif
+
+#if defined(__has_builtin)
+#define DECIMAL_INTERNAL_HAS_BUILTIN(x) __has_builtin(x)
+#else
+#define DECIMAL_INTERNAL_HAS_BUILTIN(x) 0
+#endif
+
+#if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && \
+    (DECIMAL_INTERNAL_HAS_BUILTIN(__builtin_clz) || defined(__GNUC__))
+#define DECIMAL_INTERNAL_HAS_BIT_BUILTINS 1
+#else
+#define DECIMAL_INTERNAL_HAS_BIT_BUILTINS 0
+#endif
+
+#if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && \
+    (DECIMAL_INTERNAL_HAS_BUILTIN(__builtin_add_overflow) || defined(__GNUC__))
+#define DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS 1
+#else
+#define DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS 0
+#endif
+
+#if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && defined(__SIZEOF_INT128__)
+#define DECIMAL_INTERNAL_HAS_NATIVE_INT128 1
+#else
+#define DECIMAL_INTERNAL_HAS_NATIVE_INT128 0
+#endif
+
+#if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && defined(_MSC_VER)
+#define DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS 1
+#include <intrin.h>
+#else
+#define DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS 0
+#endif
+
+#if DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS && defined(_M_X64) && _MSC_VER >= 1920
+#define DECIMAL_INTERNAL_HAS_MSVC_DIV128 1
+#else
+#define DECIMAL_INTERNAL_HAS_MSVC_DIV128 0
+#endif
+
+#if DECIMAL_INTERNAL_HAS_NATIVE_INT128 || DECIMAL_INTERNAL_HAS_MSVC_DIV128
+#define DECIMAL_INTERNAL_HAS_FAST_DIV128 1
+#else
+#define DECIMAL_INTERNAL_HAS_FAST_DIV128 0
+#endif
+
+namespace decimal_internal {
+
+inline constexpr bool compiler_intrinsics_enabled =
+    DECIMAL_INTERNAL_HAS_BIT_BUILTINS || DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS ||
+    DECIMAL_INTERNAL_HAS_NATIVE_INT128 || DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS;
+
+struct uint128_words {
+  std::uint64_t high;
+  std::uint64_t low;
+};
+
+inline int count_trailing_zeros(std::uint32_t value) noexcept {
+  if (value == 0) {
+    return 32;
+  }
+#if DECIMAL_INTERNAL_HAS_BIT_BUILTINS
+  return __builtin_ctz(value);
+#elif DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS
+  unsigned long index = 0;
+  _BitScanForward(&index, value);
+  return static_cast<int>(index);
+#else
+  int count = 0;
+  while ((value & 1U) == 0) {
+    value >>= 1;
+    ++count;
+  }
+  return count;
+#endif
+}
+
+inline int count_leading_zeros(std::uint32_t value) noexcept {
+  if (value == 0) {
+    return 32;
+  }
+#if DECIMAL_INTERNAL_HAS_BIT_BUILTINS
+  return __builtin_clz(value);
+#elif DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS
+  unsigned long index = 0;
+  _BitScanReverse(&index, value);
+  return 31 - static_cast<int>(index);
+#else
+  int count = 0;
+  for (std::uint32_t bit = UINT32_C(1) << 31; (value & bit) == 0; bit >>= 1) {
+    ++count;
+  }
+  return count;
+#endif
+}
+
+inline int count_leading_zeros(std::uint64_t value) noexcept {
+  if (value == 0) {
+    return 64;
+  }
+#if DECIMAL_INTERNAL_HAS_BIT_BUILTINS
+  return __builtin_clzll(static_cast<unsigned long long>(value));
+#elif DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS && (defined(_M_X64) || defined(_M_ARM64))
+  unsigned long index = 0;
+  _BitScanReverse64(&index, value);
+  return 63 - static_cast<int>(index);
+#elif DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS
+  const std::uint32_t high = static_cast<std::uint32_t>(value >> 32);
+  return high != 0 ? count_leading_zeros(high)
+                   : 32 + count_leading_zeros(static_cast<std::uint32_t>(value));
+#else
+  int count = 0;
+  for (std::uint64_t bit = UINT64_C(1) << 63; (value & bit) == 0; bit >>= 1) {
+    ++count;
+  }
+  return count;
+#endif
+}
+
+inline int population_count(std::uint32_t value) noexcept {
+#if DECIMAL_INTERNAL_HAS_BIT_BUILTINS
+  return __builtin_popcount(value);
+#else
+  value -= (value >> 1) & UINT32_C(0x55555555);
+  value = (value & UINT32_C(0x33333333)) + ((value >> 2) & UINT32_C(0x33333333));
+  value = (value + (value >> 4)) & UINT32_C(0x0f0f0f0f);
+  return static_cast<int>((value * UINT32_C(0x01010101)) >> 24);
+#endif
+}
+
+inline bool add_overflow(std::int64_t lhs, std::int64_t rhs, std::int64_t* result) noexcept {
+#if DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS
+  return __builtin_add_overflow(lhs, rhs, result);
+#else
+  if ((rhs > 0 && lhs > (std::numeric_limits<std::int64_t>::max)() - rhs) ||
+      (rhs < 0 && lhs < (std::numeric_limits<std::int64_t>::min)() - rhs)) {
+    return true;
+  }
+  *result = lhs + rhs;
+  return false;
+#endif
+}
+
+inline bool multiply_overflow(std::int64_t lhs, std::int64_t rhs, std::int64_t* result) noexcept {
+#if DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS
+  return __builtin_mul_overflow(lhs, rhs, result);
+#else
+  if (lhs == 0 || rhs == 0) {
+    *result = 0;
+    return false;
+  }
+  const std::int64_t maximum = (std::numeric_limits<std::int64_t>::max)();
+  const std::int64_t minimum = (std::numeric_limits<std::int64_t>::min)();
+  const bool overflow =
+      lhs > 0 ? (rhs > 0 ? lhs > maximum / rhs : rhs < minimum / lhs)
+              : (rhs > 0 ? lhs < minimum / rhs : rhs < maximum / lhs);
+  if (overflow) {
+    return true;
+  }
+  *result = lhs * rhs;
+  return false;
+#endif
+}
+
+inline std::uint64_t unsigned_magnitude(std::int64_t value) noexcept {
+  return value < 0 ? static_cast<std::uint64_t>(-(value + 1)) + 1
+                   : static_cast<std::uint64_t>(value);
+}
+
+inline uint128_words multiply_64x64(std::uint64_t lhs, std::uint64_t rhs) noexcept {
+#if DECIMAL_INTERNAL_HAS_NATIVE_INT128
+  __extension__ using native_uint128 = unsigned __int128;
+  const native_uint128 product = static_cast<native_uint128>(lhs) * rhs;
+  return {static_cast<std::uint64_t>(product >> 64), static_cast<std::uint64_t>(product)};
+#elif DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS && defined(_M_X64)
+  std::uint64_t high = 0;
+  const std::uint64_t low = _umul128(lhs, rhs, &high);
+  return {high, low};
+#elif DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS && defined(_M_ARM64)
+  return {__umulh(lhs, rhs), lhs * rhs};
+#else
+  const std::uint64_t lhs_high = lhs >> 32;
+  const std::uint64_t lhs_low = lhs & UINT32_MAX;
+  const std::uint64_t rhs_high = rhs >> 32;
+  const std::uint64_t rhs_low = rhs & UINT32_MAX;
+  const std::uint64_t low_product = lhs_low * rhs_low;
+  const std::uint64_t middle1 = lhs_high * rhs_low + (low_product >> 32);
+  const std::uint64_t middle1_low = middle1 & UINT32_MAX;
+  const std::uint64_t middle2 = lhs_low * rhs_high + middle1_low;
+  const std::uint64_t high = lhs_high * rhs_high + (middle1 >> 32) + (middle2 >> 32);
+  const std::uint64_t low = (middle2 << 32) | (low_product & UINT32_MAX);
+  return {high, low};
+#endif
+}
+
+#if DECIMAL_INTERNAL_HAS_FAST_DIV128
+inline std::uint64_t divide_128_by_64(std::uint64_t high, std::uint64_t low,
+                                      std::uint64_t divisor, std::uint64_t* remainder) noexcept {
+#if DECIMAL_INTERNAL_HAS_NATIVE_INT128
+  __extension__ using native_uint128 = unsigned __int128;
+  const native_uint128 dividend = (static_cast<native_uint128>(high) << 64) | low;
+  *remainder = static_cast<std::uint64_t>(dividend % divisor);
+  return static_cast<std::uint64_t>(dividend / divisor);
+#else
+  return _udiv128(high, low, divisor, remainder);
+#endif
+}
+#endif
+
+}  // namespace decimal_internal
+
 // round_mode
 // 舍入模式: 用于可能丢弃精度的十进制 (或其它定点/高精度) 运算.
 //
@@ -589,12 +805,12 @@ struct mutable_bigint {
 
   // 返回 limb 中尾随零 bit 的个数.
   static int32_t number_of_trailing_zeros(uint32_t limb) {
-    return limb == 0 ? 32 : __builtin_ctz(limb);
+    return decimal_internal::count_trailing_zeros(limb);
   }
 
   // 返回 limb 中前导零 bit 的个数.
   static int32_t number_of_leading_zeros(uint32_t limb) {
-    return limb == 0 ? 32 : __builtin_clz(limb);
+    return decimal_internal::count_leading_zeros(limb);
   }
 
   // 返回 limb 的有效 bit 长度 (不含前导零).
@@ -1180,7 +1396,7 @@ struct mutable_bigint {
     quotient.int_len_ = limit;
     jarray<uint32_t>& q = quotient.value_;
 
-    const int32_t shift = ldivisor == 0 ? 64 : __builtin_clzll(ldivisor);
+    const int32_t shift = decimal_internal::count_leading_zeros(ldivisor);
     if (shift > 0) {
       ldivisor <<= shift;
       rem.left_shift(shift);
@@ -3875,7 +4091,7 @@ struct bigint {
     if (bc == -1) {
       bc = 0;
       for (int32_t i = 0; i < mag_.length(); ++i) {
-        bc += __builtin_popcount(mag_[i]);
+        bc += decimal_internal::population_count(mag_[i]);
       }
       if (signum_ < 0) {
         int32_t mag_trailing_zero_count = 0;
@@ -4831,7 +5047,7 @@ struct bigint {
 
   // 单 limb 乘法
   static bigint multiply_by_int(const jarray<uint32_t>& x, uint32_t y, int32_t sign) {
-    if (__builtin_popcount(y) == 1) {
+    if (decimal_internal::population_count(y) == 1) {
       return bigint(sign, shift_left_mag(x, mutable_bigint::number_of_trailing_zeros(y)));
     }
 
@@ -6427,7 +6643,8 @@ struct decimal {
       return 1;
     }
     // r = ((64 - 前导零位数(x) + 1) * 1233) >> 12.
-    int32_t r = (int32_t)(((64 - __builtin_clzll((uint64_t)x) + 1) * 1233) >> 12);
+    int32_t r =
+        (int32_t)(((64 - decimal_internal::count_leading_zeros((uint64_t)x) + 1) * 1233) >> 12);
     const int64_t* tab = LONG_TEN_POWERS_TABLE;
     return (r >= 19 || x < tab[r]) ? r : r + 1;
   }
@@ -6479,7 +6696,7 @@ struct decimal {
   // 两 long 相加; 溢出时返回 INFLATED.
   static int64_t add_64(int64_t xs, int64_t ys) {
     int64_t sum = 0;
-    if (__builtin_add_overflow(xs, ys, &sum)) {
+    if (decimal_internal::add_overflow(xs, ys, &sum)) {
       return INFLATED;
     }
     return sum;
@@ -6488,7 +6705,7 @@ struct decimal {
   // 两 long 相乘; 无法表示时返回 INFLATED.
   static int64_t multiply_64(int64_t x, int64_t y) {
     int64_t product = 0;
-    if (__builtin_mul_overflow(x, y, &product)) {
+    if (decimal_internal::multiply_overflow(x, y, &product)) {
       return INFLATED;
     }
     return product;
@@ -6540,7 +6757,8 @@ struct decimal {
       }
       return unsigned_long_compare_eq((uint64_t)(lo), (uint64_t)(LONGLONG_TEN_POWERS_TABLE[0][1])) ? 20 : 19;
     }
-    const int32_t r = (int32_t)(((128 - __builtin_clzll((uint64_t)(hi)) + 1) * 1233) >> 12);
+    const int32_t r =
+        (int32_t)(((128 - decimal_internal::count_leading_zeros((uint64_t)(hi)) + 1) * 1233) >> 12);
     const int32_t idx = r - 19;
     if (idx >= 20 ||
         long_long_compare_magnitude(hi, lo, LONGLONG_TEN_POWERS_TABLE[idx][0], LONGLONG_TEN_POWERS_TABLE[idx][1])) {
@@ -7457,7 +7675,7 @@ struct decimal {
       return std::nullopt;
     }
 
-    const int32_t shift = __builtin_clzll((uint64_t)(divisor));
+    const int32_t shift = decimal_internal::count_leading_zeros((uint64_t)(divisor));
     divisor <<= shift;
 
     const int64_t v1 = (uint64_t)(divisor) >> 32;
@@ -7580,26 +7798,10 @@ struct decimal {
   // 计算 (dividend0*dividend1)/divisor 并舍入.
   static decimal multiply_divide_and_round(int64_t dividend0, int64_t dividend1, int64_t divisor, int32_t scale,
                                            round_mode rm, int32_t preferred_scale) {
-    __int128 p = (__int128)(dividend0) * (__int128)(dividend1);
-    __int128 q = p / divisor;
-    __int128 r = p % divisor;
-    int64_t qq = (int64_t)(q);
-    if (rm == round_mode::DOWN && scale == preferred_scale) {
-      return value_of(qq, scale);
+    if (auto result = try_multiply_divide_and_round(dividend0, dividend1, divisor, scale, rm, preferred_scale)) {
+      return *result;
     }
-    if (r != 0) {
-      int32_t qsign = ((p < 0) == (divisor < 0)) ? 1 : -1;
-      int64_t rr = (int64_t)(r);
-      if (need_increment(divisor, rm, qsign, qq, rr)) {
-        qq += qsign;
-      }
-      return value_of(qq, scale);
-    }
-    // 余数为 0 时才 strip 尾随零 (同 JDK divideAndRound128).
-    if (preferred_scale != scale) {
-      return create_and_strip_zeros_to_match_scale(qq, scale, preferred_scale);
-    }
-    return value_of(qq, scale);
+    return divide_and_round(bigint::value_of(dividend0).multiply(dividend1), divisor, scale, rm, preferred_scale);
   }
 
   // 同 multiply_divide_and_round, 但当 (dividend0*dividend1)/divisor 的商超出 long
@@ -7607,22 +7809,43 @@ struct decimal {
   // bigint 路径.
   static std::optional<decimal> try_multiply_divide_and_round(int64_t dividend0, int64_t dividend1, int64_t divisor,
                                                               int32_t scale, round_mode rm, int32_t preferred_scale) {
-    __int128 p = (__int128)(dividend0) * (__int128)(dividend1);
-    __int128 q = p / divisor;
-    __int128 r = p % divisor;
-    __int128 qabs = (q < 0) ? -q : q;
-    if (qabs > (__int128)(INT64_MAX)) {
-      return std::nullopt;  // 商超出 long, 交由 bigint 路径处理
+    if (divisor == 0) {
+      throw std::runtime_error("division by zero");
     }
-    int64_t qq = (int64_t)(q);
+
+    const uint64_t divisor_magnitude = decimal_internal::unsigned_magnitude(divisor);
+    if (divisor_magnitude > static_cast<uint64_t>(INT64_MAX)) {
+      return std::nullopt;
+    }
+
+    const decimal_internal::uint128_words product = decimal_internal::multiply_64x64(
+        decimal_internal::unsigned_magnitude(dividend0), decimal_internal::unsigned_magnitude(dividend1));
+    const int32_t quotient_sign = ((dividend0 < 0) == (dividend1 < 0)) == (divisor > 0) ? 1 : -1;
+    const decimal_internal::uint128_words maximum_dividend =
+        decimal_internal::multiply_64x64(divisor_magnitude, static_cast<uint64_t>(INT64_MAX));
+    if (product.high > maximum_dividend.high ||
+        (product.high == maximum_dividend.high && product.low > maximum_dividend.low)) {
+      return std::nullopt;
+    }
+
+#if DECIMAL_INTERNAL_HAS_FAST_DIV128
+    if (product.high >= divisor_magnitude) {
+      return std::nullopt;
+    }
+    uint64_t remainder = 0;
+    const uint64_t quotient =
+        decimal_internal::divide_128_by_64(product.high, product.low, divisor_magnitude, &remainder);
+    if (quotient > static_cast<uint64_t>(INT64_MAX)) {
+      return std::nullopt;
+    }
+    int64_t qq = static_cast<int64_t>(quotient) * quotient_sign;
     if (rm == round_mode::DOWN && scale == preferred_scale) {
       return value_of(qq, scale);
     }
-    if (r != 0) {
-      int32_t qsign = ((p < 0) == (divisor < 0)) ? 1 : -1;
-      int64_t rr = (int64_t)(r);
-      if (need_increment(divisor, rm, qsign, qq, rr)) {
-        qq += qsign;
+    if (remainder != 0) {
+      if (need_increment(static_cast<int64_t>(divisor_magnitude), rm, quotient_sign, qq,
+                         static_cast<int64_t>(remainder))) {
+        qq += quotient_sign;
       }
       return value_of(qq, scale);
     }
@@ -7631,6 +7854,11 @@ struct decimal {
       return create_and_strip_zeros_to_match_scale(qq, scale, preferred_scale);
     }
     return value_of(qq, scale);
+#else
+    return try_divide_and_round_128(static_cast<int64_t>(product.high), static_cast<int64_t>(product.low),
+                                    static_cast<int64_t>(divisor_magnitude), quotient_sign, scale, rm,
+                                    preferred_scale);
+#endif
   }
 
   // 对可能为负的 long 做除法, 返回 {余数, 商} (同 JDK divRemNegativeLong).
@@ -7686,39 +7914,14 @@ struct decimal {
     if (product != INFLATED) {
       return do_round(product, scale, mc);
     }
-    int32_t rsign = 1;
-    if (x < 0) {
-      x = -x;
-      rsign = -1;
-    }
-    if (y < 0) {
-      y = -y;
-      rsign *= -1;
-    }
-    int64_t m0_hi = (uint64_t)(x) >> 32;
-    int64_t m0_lo = x & 0xffffffffLL;
-    int64_t m1_hi = (uint64_t)(y) >> 32;
-    int64_t m1_lo = y & 0xffffffffLL;
-    product = m0_lo * m1_lo;
-    int64_t m0 = product & 0xffffffffLL;
-    int64_t m1 = (uint64_t)(product) >> 32;
-    product = m0_hi * m1_lo + m1;
-    m1 = product & 0xffffffffLL;
-    int64_t m2 = (uint64_t)(product) >> 32;
-    product = m0_lo * m1_hi + m1;
-    m1 = product & 0xffffffffLL;
-    m2 += (uint64_t)(product) >> 32;
-    int64_t m3 = (uint64_t)(m2) >> 32;
-    m2 &= 0xffffffffLL;
-    product = m0_hi * m1_hi + m2;
-    m2 = product & 0xffffffffLL;
-    m3 = (((uint64_t)(product) >> 32) + m3) & 0xffffffffLL;
-    const int64_t m_hi = make_64(m3, m2);
-    const int64_t m_lo = make_64(m1, m0);
-    if (auto res = do_round_128(m_hi, m_lo, rsign, scale, mc)) {
+    const int32_t result_sign = (x < 0) == (y < 0) ? 1 : -1;
+    const decimal_internal::uint128_words wide_product = decimal_internal::multiply_64x64(
+        decimal_internal::unsigned_magnitude(x), decimal_internal::unsigned_magnitude(y));
+    if (auto res = do_round_128(static_cast<int64_t>(wide_product.high), static_cast<int64_t>(wide_product.low),
+                                result_sign, scale, mc)) {
       return *res;
     }
-    decimal res = value_of(bigint::value_of(x).multiply(y * rsign), scale, 0);
+    decimal res = value_of(bigint::value_of(x).multiply(y), scale, 0);
     return do_round_value(res, mc);
   }
 
@@ -9018,5 +9221,14 @@ inline const decimal decimal::ONE_TENTH = decimal::value_of(1LL, 1);
 
 // 常量 0.5, scale 为 1.
 inline const decimal decimal::ONE_HALF = decimal::value_of(5LL, 1);
+
+#undef DECIMAL_INTERNAL_HAS_FAST_DIV128
+#undef DECIMAL_INTERNAL_HAS_MSVC_DIV128
+#undef DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS
+#undef DECIMAL_INTERNAL_HAS_NATIVE_INT128
+#undef DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS
+#undef DECIMAL_INTERNAL_HAS_BIT_BUILTINS
+#undef DECIMAL_INTERNAL_HAS_BUILTIN
+#undef DECIMAL_INTERNAL_INTRINSICS_DISABLED
 
 #endif  // DECIMAL_H_

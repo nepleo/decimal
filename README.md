@@ -21,16 +21,26 @@ scale-aware operations, and string and primitive conversions.
 - A C++17-compatible compiler
 - CMake 3.16 or later when using the CMake package
 
+Decimal detects compiler capabilities instead of requiring a particular
+compiler. GCC and Clang use their built-in bit, overflow, and 128-bit integer
+operations. MSVC uses the corresponding bit-scan and 128-bit arithmetic
+intrinsics where the target architecture provides them. Other C++17 compilers
+and architectures use dependency-free portable implementations.
+
+Define `DECIMAL_DISABLE_INTRINSICS=1` before including the header to force the
+portable implementation, for example when validating a new compiler or target.
+
 ## Quick start
 
 ```cpp
 #include <decimal/decimal.h>
 
+#include <cstdint>
 #include <iostream>
 
 int main() {
   const decimal price = decimal::value_of(1999, 2);
-  const decimal quantity = decimal::value_of(3LL);
+  const decimal quantity = decimal::value_of(std::int64_t{3});
   const decimal total = price.multiply(quantity);
 
   std::cout << total.to_plain_string() << '\n';  // 59.97
