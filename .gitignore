@@ -1,0 +1,31 @@
+# CMake build directories and user-local configuration
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+/.cache/
+CMakeUserPresets.json
+compile_commands.json
+
+# Compiled artifacts
+*.a
+*.dll
+*.dylib
+*.exe
+*.lib
+*.o
+*.obj
+*.so
+
+# Test and coverage artifacts
+*.gcda
+*.gcno
+*.profraw
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vs/
+.vscode/
+*.swp
+*~
