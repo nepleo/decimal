@@ -47,14 +47,25 @@
 #define DECIMAL_INTERNAL_HAS_OVERFLOW_BUILTINS 0
 #endif
 
-// clang-cl advertises __int128, but 128-bit division under the MSVC ABI can
-// require compiler runtime helpers that are not provided by the MSVC runtime.
+// 编译器模式判定说明:
+//   普通 Clang: 定义 __clang__, 不定义 _MSC_VER.
+//   clang-cl:   同时定义 __clang__ 和 _MSC_VER; 编译器内核是 Clang,
+//               但使用 MSVC 兼容的命令行、ABI、标准库和运行库.
+//   MSVC:       定义 _MSC_VER, 不定义 __clang__.
+// 因此不能只根据 _MSC_VER 就把 clang-cl 当成真正的 MSVC,而应按具体能力
+// 分别选择实现.
+
+// GCC 和普通 Clang 可直接使用原生 __int128. clang-cl 虽然也声明
+// __SIZEOF_INT128__,但在 MSVC ABI 下进行 128 位除法可能依赖 MSVC 运行库
+// 没有提供的编译器辅助函数,因此这里排除所有定义了 _MSC_VER 的模式.
 #if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && defined(__SIZEOF_INT128__) && !defined(_MSC_VER)
 #define DECIMAL_INTERNAL_HAS_NATIVE_INT128 1
 #else
 #define DECIMAL_INTERNAL_HAS_NATIVE_INT128 0
 #endif
 
+// MSVC 和 clang-cl 都可以包含 <intrin.h>,但其中可用的 intrinsic 不完全
+// 相同;后续仍需针对每项能力继续检测.
 #if !DECIMAL_INTERNAL_INTRINSICS_DISABLED && defined(_MSC_VER)
 #define DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS 1
 #include <intrin.h>
@@ -62,7 +73,8 @@
 #define DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS 0
 #endif
 
-// _udiv128 is provided by MSVC on x64, but not by clang-cl's intrin.h.
+// _udiv128 仅在真正的 MSVC x64 环境中可用. clang-cl 的 <intrin.h> 提供
+// _umul128,但不提供 _udiv128,所以 clang-cl 的 128 位除法必须走通用实现.
 #if DECIMAL_INTERNAL_HAS_MSVC_INTRINSICS && defined(_M_X64) && !defined(__clang__) && \
     !defined(__GNUC__) && _MSC_VER >= 1920
 #define DECIMAL_INTERNAL_HAS_MSVC_DIV128 1
