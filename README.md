@@ -1,9 +1,11 @@
-# Decimal
+# decimal
+
+English | [简体中文](README.zh-CN.md)
 
 [![CI](https://github.com/nepleo/decimal/actions/workflows/ci.yml/badge.svg)](https://github.com/nepleo/decimal/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Decimal is a header-only C++17 library for decimal arithmetic. It provides
+decimal is a header-only C++17 library for decimal arithmetic. It provides
 arbitrary-precision decimal values, configurable precision and rounding modes,
 scale-aware operations, and string and primitive conversions.
 
@@ -21,7 +23,7 @@ scale-aware operations, and string and primitive conversions.
 - A C++17-compatible compiler
 - CMake 3.16 or later when using the CMake package
 
-Decimal detects compiler capabilities instead of requiring a particular
+decimal detects compiler capabilities instead of requiring a particular
 compiler. GCC and Clang use their built-in bit, overflow, and 128-bit integer
 operations. MSVC uses the corresponding bit-scan and 128-bit arithmetic
 intrinsics where the target architecture provides them. Other C++17 compilers
@@ -58,12 +60,12 @@ add_executable(my_app main.cc)
 target_link_libraries(my_app PRIVATE decimal::decimal)
 ```
 
-Including Decimal as a subproject does not build its tests or add installation
+Including decimal as a subproject does not build its tests or add installation
 rules unless `DECIMAL_BUILD_TESTS` or `DECIMAL_INSTALL` is explicitly enabled.
 
 ### As an installed package
 
-Configure and install Decimal:
+Configure and install decimal:
 
 ```sh
 cmake -S . -B build \
@@ -82,7 +84,7 @@ add_executable(my_app main.cc)
 target_link_libraries(my_app PRIVATE decimal::decimal)
 ```
 
-If Decimal is installed to a non-standard prefix, pass it when configuring the
+If decimal is installed to a non-standard prefix, pass it when configuring the
 consumer:
 
 ```sh
@@ -107,11 +109,6 @@ On a multi-configuration generator, add `--config Release` when building and
 | `DECIMAL_BUILD_TESTS` | `ON` | `OFF` | Build the test suite |
 | `DECIMAL_INSTALL` | `ON` | `OFF` | Generate installation rules |
 
-## Project status
-
-The current version is 0.1.0. The public API may evolve before the first stable
-release.
-
 ## License
 
-Decimal is available under the [MIT License](LICENSE).
+decimal is available under the [MIT License](LICENSE).
