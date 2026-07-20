@@ -1,6 +1,7 @@
 # decimal
 
-[English](README.md) | 简体中文 | [在线文档](https://nepleo.github.io/decimal/)
+[English](README.md) | 简体中文 | [在线文档](https://nepleo.github.io/decimal/) |
+[HTML 预览](https://htmlpreview.github.io/?https://github.com/nepleo/decimal/blob/main/docs/index.html)
 
 [![CI](https://github.com/nepleo/decimal/actions/workflows/ci.yml/badge.svg)](https://github.com/nepleo/decimal/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-346ddb)](https://nepleo.github.io/decimal/)
@@ -108,6 +109,13 @@ decimal 检测编译器能力,而不是假设编译器类型. GCC 和 Clang 可�
 
 在包含头文件前定义 `DECIMAL_DISABLE_INTRINSICS=1`,可以强制使用可移植实现,用于验证新的编译器或目标平台.
 
+## 性能概览
+
+下图是在 macOS 13.7.8 和 Apple M1 Pro 上对紧凑 `int64` 快速路径的测试快照. 数值为每次操作耗时的几何平均值,
+单位是 ns,数值越低越好. 结果只描述该测试环境,不构成跨平台性能保证.
+
+[![C++ decimal 性能测试结果](docs/benchmark.svg)](docs/benchmark.svg)
+
 ## 文档
 
 [在线手册](https://nepleo.github.io/decimal/) 包含:
@@ -117,6 +125,9 @@ decimal 检测编译器能力,而不是假设编译器类型. GCC 和 Clang 可�
 - 除法,转换和格式化重载的选择建议.
 - 金额,汇率,CSV 输入,贷款和精确性检查的可运行示例.
 - `round_mode`,`math_context` 和 `bigint` 的高级参考.
+
+如果自定义域名暂时不可用,可以使用
+[HTML 预览](https://htmlpreview.github.io/?https://github.com/nepleo/decimal/blob/main/docs/index.html).
 
 ## 构建和测试
 
