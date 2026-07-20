@@ -1,0 +1,871 @@
+<!doctype html>
+<html class="no-js" lang="zh-CN" data-language="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="decimal C++17 arbitrary-precision decimal user manual">
+  <title>decimal C++ 使用手册</title>
+  <style>
+    :root{color-scheme:light;--page:#fff;--side:#f7f8fa;--surface:#fff;--soft:#f6f8fa;--text:#20242c;--muted:#667085;--border:#e4e7ec;--accent:#346ddb;--accent-soft:#edf4ff;--code:#f6f8fa;--code-text:#24292f;--note:#f2f7ff;--warn:#fff8e8;--shadow:0 16px 44px rgba(16,24,40,.12);--header:56px;--sidebar:272px;--outline:216px;--content:780px;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    [data-theme="dark"]{color-scheme:dark;--page:#101216;--side:#14171c;--surface:#15181e;--soft:#1b1f26;--text:#e7e9ed;--muted:#a3abb8;--border:#2c323b;--accent:#8aafff;--accent-soft:#172642;--code:#0b0e14;--code-text:#edf2f7;--note:#14213a;--warn:#2a2415;--shadow:0 16px 44px rgba(0,0,0,.36)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--page);color:var(--text);font:15.5px/1.72 var(--sans);-webkit-font-smoothing:antialiased}button,input{font:inherit}a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}[data-language="zh-CN"] [data-lang="en"],[data-language="en"] [data-lang="zh-CN"]{display:none!important}.no-js .js-only{display:none!important}
+    .icon{display:block;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.skip{position:fixed;z-index:100;top:8px;left:8px;padding:8px 12px;border-radius:7px;background:var(--surface);transform:translateY(-180%)}.skip:focus{transform:none}
+    #topbar{position:fixed;z-index:30;inset:0 0 auto;height:var(--header);display:flex;align-items:center;gap:6px;padding:0 22px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 95%,transparent);backdrop-filter:blur(14px)}.brand{margin-right:auto;color:var(--text);font-size:18px;font-weight:760;letter-spacing:-.02em}.brand:hover{text-decoration:none}.top-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:36px;padding:7px 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:var(--muted);cursor:pointer}.top-button:hover{border-color:var(--border);background:var(--soft);color:var(--text)}#menu-toggle{display:none}
+    #primary-navigation{position:fixed;z-index:20;top:var(--header);bottom:0;left:0;width:var(--sidebar);overflow:auto;padding:24px 16px 42px;border-right:1px solid var(--border);background:var(--side)}.nav-section{margin-bottom:22px}.nav-heading{margin:0 9px 8px;color:var(--muted);font-size:12px;font-weight:680;letter-spacing:.01em;text-transform:none}.nav-list{list-style:none;margin:0;padding:0}.nav-list li{margin:2px 0}.nav-list a{position:relative;display:block;padding:5px 10px;border-radius:5px;color:var(--muted);font-size:13.5px;line-height:1.45}.nav-list a:hover{background:var(--accent-soft);color:var(--text);text-decoration:none}.nav-list a[aria-current="location"]{background:transparent;color:var(--accent);font-weight:680}.nav-list a[aria-current="location"]:before{position:absolute;inset:7px auto 7px 0;width:2px;border-radius:2px;background:var(--accent);content:""}.nav-child a{margin-left:10px;padding-left:15px!important;border-left:1px solid var(--border);border-radius:0 5px 5px 0!important;font-size:12.5px!important}
+    #main-content{min-width:0;margin:0 var(--outline) 0 var(--sidebar);padding:92px 46px 110px}#main-content>section{width:100%;max-width:var(--content);margin:0 auto 76px;scroll-margin-top:78px}#page-navigation{position:fixed;top:78px;right:12px;width:var(--outline);max-height:calc(100vh - 98px);overflow:auto;padding:0 18px;border-left:1px solid var(--border)}#page-navigation h2{margin:0 0 10px;color:#98a2b3;font-size:10px;letter-spacing:.12em;text-transform:uppercase}#page-navigation .nav-list a{padding:4px 8px;font-size:12.5px}
+    h1,h2,h3,h4{line-height:1.25;letter-spacing:-.025em;scroll-margin-top:76px}h1{margin:.1em 0;font-size:46px}h2{margin:0 0 18px;font-size:29px}h3{margin:38px 0 10px;font-size:21px}p{margin:10px 0 16px}.muted,.lead{color:var(--muted)}.lead{font-size:17px}.eyebrow{color:var(--accent);font-size:11px;font-weight:760;letter-spacing:.13em;text-transform:uppercase}.hero{padding-bottom:38px;border-bottom:1px solid var(--border)}.hero p{max-width:710px;font-size:17px}.hero-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}.button{display:inline-flex;align-items:center;gap:7px;padding:9px 14px;border:1px solid var(--border);border-radius:8px;font-weight:680}.button.primary{border-color:#346ddb;background:#346ddb;color:#fff}.button .icon{width:16px;height:16px}
+    .grid{display:grid;grid-template-columns:minmax(0,1fr);gap:14px}.card{min-width:0;overflow:hidden;padding:19px;border:1px solid var(--border);border-radius:9px;background:color-mix(in srgb,var(--soft) 52%,var(--surface))}.card h3{margin:0 0 7px;font-size:17px}.callout{margin:18px 0;padding:14px 16px;border-left:3px solid var(--accent);border-radius:6px;background:var(--note)}.callout.warning{border-color:#d49b1f;background:var(--warn)}
+    code{font:13px/1.55 var(--mono)}:not(pre)>code{padding:2px 5px;overflow-wrap:anywhere;border-radius:4px;background:var(--soft)}pre{position:relative;margin:16px 0;padding:41px 18px 17px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--code);color:var(--code-text);line-height:1.62}pre:before{position:absolute;top:11px;left:17px;color:#8b949e;font:700 10px/1 var(--sans);letter-spacing:.1em;content:"CODE"}pre:has(.language-cpp):before{content:"C++"}pre:has(.language-text):before{content:"OUTPUT"}pre code{font-size:13.5px}.copy-button{position:absolute;top:6px;right:7px;width:31px;height:29px;padding:6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--muted);cursor:pointer}.copy-button .icon{width:15px;height:15px}.token-keyword{color:#cf222e}.token-string{color:#0a3069}.token-comment{color:#6e7781;font-style:italic}[data-theme="dark"] .token-keyword{color:#ff7b72}[data-theme="dark"] .token-string{color:#a5d6ff}[data-theme="dark"] .token-comment{color:#8b949e}
+    table{display:block;width:100%;overflow:auto;border-collapse:collapse}th,td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}th{color:var(--muted);font-size:11px;letter-spacing:.04em;text-transform:uppercase}.api-group{padding-top:8px}.function-doc{margin:0;padding:30px 0;border-top:1px solid var(--border);scroll-margin-top:76px}.function-doc:first-of-type{border-top:0}.function-doc h3{display:flex;align-items:center;gap:9px;margin:0 0 9px;font-family:var(--mono);font-size:20px}.kind{padding:2px 7px;border:1px solid var(--border);border-radius:999px;color:var(--muted);font:650 10px/1.5 var(--sans);letter-spacing:.04em;text-transform:uppercase}.function-doc .summary{font-size:16px}.function-doc .usage{margin-top:20px}.function-doc .usage>strong{font-size:13px}.signature{margin-top:12px}.two-col{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;align-items:start}.two-col+ .two-col{margin-top:38px}.output{margin-top:-16px;border-top:0;background:var(--surface)}.code-explanation{margin:8px 0 4px;padding-left:22px;color:var(--muted)}.code-explanation li{margin:7px 0}.code-explanation code{color:var(--text)}
+    details{margin:15px 0;border-bottom:1px solid var(--border)}summary{display:flex;align-items:center;gap:10px;padding:12px 2px;cursor:pointer;font-weight:680;list-style:none}summary::-webkit-details-marker{display:none}summary:before{width:7px;height:7px;border-right:1.7px solid currentColor;border-bottom:1.7px solid currentColor;transform:rotate(-45deg);transition:transform .15s;content:""}details[open] summary:before{transform:rotate(45deg)}.details-body{padding:0 0 16px 20px}
+    #search-dialog{position:fixed;z-index:80;inset:0;padding:10vh 18px;background:rgba(4,8,18,.66)}#search-dialog[hidden]{display:none}.search-panel{max-width:720px;max-height:76vh;margin:auto;padding:18px;overflow:auto;border:1px solid var(--border);border-radius:14px;background:var(--surface);box-shadow:var(--shadow)}.search-row{display:flex;gap:8px}#search-input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--page);color:var(--text)}#search-results{list-style:none;margin:8px 0 0;padding:0}#search-results a{display:block;padding:9px 10px;border-radius:7px}#search-results a:hover,#search-results a:focus{background:var(--accent-soft);text-decoration:none}footer{margin-top:55px;padding-top:28px;border-top:1px solid var(--border);color:var(--muted)}
+    @media(max-width:1180px){#page-navigation{display:none}#main-content{margin-right:0;padding-inline:42px}}@media(max-width:900px){#menu-toggle{display:inline-flex}#primary-navigation{transform:translateX(-105%);box-shadow:var(--shadow);transition:transform .18s}body.menu-open #primary-navigation{transform:none}#main-content{margin-left:0;padding:80px 25px 90px}}@media(max-width:620px){#topbar{padding:0 9px}.hide-mobile{display:none}#main-content{padding:75px 16px 70px}h1{font-size:38px}h2{font-size:26px}.function-doc h3{font-size:18px;overflow-wrap:anywhere}pre{margin-inline:-3px}.top-button{padding:7px 8px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*:before,*:after{transition-duration:.01ms!important}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main-content"><span data-lang="zh-CN">跳到正文</span><span data-lang="en">Skip to content</span></a>
+  <header id="topbar">
+    <button class="top-button js-only" id="menu-toggle" type="button" aria-label="打开导航" aria-expanded="false" aria-controls="primary-navigation"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+    <a class="brand" href="#overview">decimal</a>
+    <button class="top-button js-only" id="search-open" type="button" aria-label="搜索"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg><span class="hide-mobile"><span data-lang="zh-CN">搜索</span><span data-lang="en">Search</span></span></button>
+    <button class="top-button js-only" id="language-toggle" type="button" aria-label="切换语言">中文 / EN</button>
+    <button class="top-button js-only" id="theme-toggle" type="button" aria-label="切换明暗主题"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.2A8 8 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2Z"/></svg></button>
+    <a class="top-button hide-mobile" href="https://github.com/nepleo/decimal#readme"><span data-lang="zh-CN">项目介绍</span><span data-lang="en">README</span></a>
+    <a class="top-button hide-mobile" href="https://github.com/nepleo/decimal">GitHub<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></a>
+  </header>
+  <aside id="primary-navigation" aria-label="Documentation navigation"><nav>
+    <div class="nav-section"><p class="nav-heading"><span data-lang="zh-CN">开始使用</span><span data-lang="en">Get started</span></p><ul class="nav-list">
+      <li><a href="#overview"><span data-lang="zh-CN">概览</span><span data-lang="en">Overview</span></a></li><li><a href="#installation"><span data-lang="zh-CN">安装与快速开始</span><span data-lang="en">Install & quick start</span></a></li><li><a href="#concepts"><span data-lang="zh-CN">核心概念</span><span data-lang="en">Core concepts</span></a></li><li><a href="#decisions"><span data-lang="zh-CN">API 选择指南</span><span data-lang="en">Choose an API</span></a></li><li><a href="#common-apis"><span data-lang="zh-CN">常用函数</span><span data-lang="en">Common APIs</span></a></li><li><a href="#rounding"><span data-lang="zh-CN">精度与舍入</span><span data-lang="en">Precision & rounding</span></a></li>
+    </ul></div>
+    <div class="nav-section"><p class="nav-heading">decimal API</p><ul class="nav-list">
+      <li><a href="#construction"><span data-lang="zh-CN">创建数值</span><span data-lang="en">Create values</span></a></li><li><a href="#arithmetic"><span data-lang="zh-CN">算术与除法</span><span data-lang="en">Arithmetic & division</span></a></li><li><a href="#scale-round"><span data-lang="zh-CN">标度与舍入</span><span data-lang="en">Scale & rounding</span></a></li><li><a href="#unary"><span data-lang="zh-CN">符号、幂与平方根</span><span data-lang="en">Signs, powers & roots</span></a></li><li><a href="#inspect-compare"><span data-lang="zh-CN">检查与比较</span><span data-lang="en">Inspect & compare</span></a></li><li><a href="#conversion"><span data-lang="zh-CN">数值转换</span><span data-lang="en">Conversions</span></a></li><li><a href="#formatting"><span data-lang="zh-CN">字符串格式</span><span data-lang="en">String formats</span></a></li>
+    </ul></div>
+    <div class="nav-section"><p class="nav-heading"><span data-lang="zh-CN">指南</span><span data-lang="en">Guides</span></p><ul class="nav-list"><li><a href="#examples"><span data-lang="zh-CN">完整示例</span><span data-lang="en">Complete examples</span></a></li><li><a href="#scenario-examples"><span data-lang="zh-CN">进阶业务示例</span><span data-lang="en">Practical examples</span></a></li><li><a href="#advanced"><span data-lang="zh-CN">高级类型</span><span data-lang="en">Advanced types</span></a></li><li><a href="#faq">FAQ</a></li></ul></div>
+  </nav></aside>
+  <main id="main-content">
+    <section id="overview" class="hero"><div class="eyebrow">Header-only · C++17 · Exact decimal arithmetic</div><h1>decimal</h1><p data-lang="zh-CN">用于金额,利率,测量值和其它精确十进制计算的任意精度 C++17 纯头文件库. 本手册从选择正确的输入方式开始,详细说明 <code>decimal</code> 的计算,舍入,比较,转换和格式化接口.</p><p data-lang="en">A header-only C++17 arbitrary-precision library for money, rates, measurements, and other exact decimal calculations. This manual starts with choosing the right input and documents every application-facing <code>decimal</code> operation.</p><div class="hero-actions"><a class="button primary" href="#installation"><span data-lang="zh-CN">30 秒开始</span><span data-lang="en">Start in 30 seconds</span><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg></a><a class="button" href="#decisions"><span data-lang="zh-CN">选择正确的 API</span><span data-lang="en">Choose the right API</span></a><a class="button" href="#construction">decimal API</a></div></section>
+
+    <section id="installation"><h2><span data-lang="zh-CN">安装与快速开始</span><span data-lang="en">Installation and quick start</span></h2><div class="grid"><article class="card"><h3>CMake</h3><pre><code>add_subdirectory(path/to/decimal)
+target_link_libraries(app PRIVATE decimal::decimal)</code></pre></article><article class="card"><h3><span data-lang="zh-CN">直接包含</span><span data-lang="en">Direct include</span></h3><pre><code>c++ -std=c++17 -I/path/to/decimal/include app.cc</code></pre></article></div><pre><code class="language-cpp" data-example="quick-start">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal unit_price("19.99");
+  const decimal quantity(3);
+  const decimal subtotal = unit_price.multiply(quantity);
+
+  std::cout &lt;&lt; subtotal.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">59.97</code></pre><ul class="code-explanation"><li data-lang="zh-CN">金额使用字符串构造，确保输入是精确的十进制 <code>19.99</code>；数量是整数，因此直接使用整数构造。</li><li data-lang="en">The price uses string construction for the exact decimal <code>19.99</code>; the quantity is an integer and uses the integer constructor.</li><li data-lang="zh-CN"><code>decimal</code> 是不可变值对象。<code>multiply()</code> 返回新的小计，不会修改 <code>unit_price</code> 或 <code>quantity</code>。</li><li data-lang="en"><code>decimal</code> is immutable. <code>multiply()</code> returns a new subtotal without modifying <code>unit_price</code> or <code>quantity</code>.</li><li data-lang="zh-CN">输出时显式调用 <code>to_plain_string()</code>，因为本库没有为 <code>decimal</code> 提供流插入运算符。</li><li data-lang="en">Output explicitly calls <code>to_plain_string()</code> because the library does not provide a stream insertion operator for <code>decimal</code>.</li></ul></section>
+
+    <section id="concepts"><h2><span data-lang="zh-CN">核心概念</span><span data-lang="en">Core concepts</span></h2><div class="grid"><article class="card"><h3>Value</h3><p><code>value = unscaled × 10<sup>-scale</sup></code></p><p data-lang="zh-CN"><code>123.45</code> 的 unscaled value 是 <code>12345</code>，scale 是 <code>2</code>。</p><p data-lang="en"><code>123.45</code> has unscaled value <code>12345</code> and scale <code>2</code>.</p></article><article class="card"><h3>Precision</h3><p data-lang="zh-CN">precision 是未缩放值的有效十进制位数；<code>123.45</code> 的 precision 为 5。</p><p data-lang="en">Precision counts significant decimal digits in the unscaled value; it is 5 for <code>123.45</code>.</p></article></div><div class="callout warning"><strong><span data-lang="zh-CN">数值相等与表示相等不同。</span><span data-lang="en">Numeric and representational equality differ.</span></strong><br><code>decimal("2.0").compare_to(decimal("2.00")) == 0</code><br><code>decimal("2.0").equals(decimal("2.00")) == false</code></div></section>
+
+    <section id="decisions"><h2><span data-lang="zh-CN">选择正确的 API</span><span data-lang="en">Choose the right API</span></h2><p class="lead" data-lang="zh-CN">先确定输入是否必须精确,再确定结果按小数位还是有效数字舍入.</p><p class="lead" data-lang="en">First decide whether the input must be exact, then whether the result is rounded by fractional digits or significant digits.</p><table><thead><tr><th><span data-lang="zh-CN">需求</span><span data-lang="en">Need</span></th><th><span data-lang="zh-CN">推荐接口</span><span data-lang="en">Recommended API</span></th><th><span data-lang="zh-CN">原因</span><span data-lang="en">Why</span></th></tr></thead><tbody><tr><td><span data-lang="zh-CN">精确文本输入</span><span data-lang="en">Exact text input</span></td><td><code>decimal("123.45")</code></td><td><span data-lang="zh-CN">保留十进制数值和输入 scale</span><span data-lang="en">Preserves decimal value and input scale</span></td></tr><tr><td><span data-lang="zh-CN">数据库未缩放整数</span><span data-lang="en">Database unscaled integer</span></td><td><code>value_of(12345, 2)</code></td><td><span data-lang="zh-CN">直接表达 12345 × 10^-2</span><span data-lang="en">Directly expresses 12345 × 10^-2</span></td></tr><tr><td><span data-lang="zh-CN">与浮点接口互操作</span><span data-lang="en">Floating-point interop</span></td><td><code>value_of(double)</code></td><td><span data-lang="zh-CN">使用 double 的规范文本形式</span><span data-lang="en">Uses the canonical text form of the double</span></td></tr><tr><td><span data-lang="zh-CN">保留固定小数位</span><span data-lang="en">Fixed fractional digits</span></td><td><code>set_scale(scale, mode)</code></td><td><span data-lang="zh-CN">适合金额和固定小数位协议</span><span data-lang="en">Fits money and fixed-scale protocols</span></td></tr><tr><td><span data-lang="zh-CN">限制有效数字</span><span data-lang="en">Limit significant digits</span></td><td><code>math_context(precision, mode)</code></td><td><span data-lang="zh-CN">适合连续计算和数值算法</span><span data-lang="en">Fits chained calculations and numerical work</span></td></tr><tr><td><span data-lang="zh-CN">除法必须完全精确</span><span data-lang="en">Division must be exact</span></td><td><code>a.divide(b)</code></td><td><span data-lang="zh-CN">非终止小数会抛异常</span><span data-lang="en">Throws for a nonterminating decimal</span></td></tr><tr><td><span data-lang="zh-CN">显示或 JSON 输出</span><span data-lang="en">Display or JSON output</span></td><td><code>to_plain_string()</code></td><td><span data-lang="zh-CN">不会产生指数表示</span><span data-lang="en">Never emits exponent notation</span></td></tr></tbody></table><div class="callout warning"><span data-lang="zh-CN">业务小数不要默认使用 <code>decimal(double)</code>. 该构造函数保留二进制浮点值的精确数值,因此 <code>decimal(0.1)</code> 通常不等于文本 <code>0.1</code>.</span><span data-lang="en">Do not default to <code>decimal(double)</code> for business values. It preserves the exact binary floating-point value, so <code>decimal(0.1)</code> is usually not textual <code>0.1</code>.</span></div></section>
+
+    <section id="common-apis"><h2><span data-lang="zh-CN">常用函数</span><span data-lang="en">Common APIs</span></h2><p class="lead" data-lang="zh-CN">下面是业务代码中最常用的入口. 表格用于快速选择函数,后面的完整示例展示结果和容易踩到的边界.</p><p class="lead" data-lang="en">These are the usual entry points for application code. Use the table to choose an operation, then see the complete examples and pitfalls below.</p><table><thead><tr><th><span data-lang="zh-CN">用途</span><span data-lang="en">Purpose</span></th><th><span data-lang="zh-CN">推荐函数</span><span data-lang="en">Recommended API</span></th><th><span data-lang="zh-CN">快速示例</span><span data-lang="en">Quick example</span></th></tr></thead><tbody>
+      <tr><td><span data-lang="zh-CN">精确构造</span><span data-lang="en">Exact construction</span></td><td><a href="#api-decimal-constructor"><code>decimal(text)</code></a></td><td><code>decimal("19.99")</code></td></tr>
+      <tr><td><span data-lang="zh-CN">整数和未缩放值</span><span data-lang="en">Integer and unscaled values</span></td><td><a href="#api-decimal-value-of"><code>value_of()</code></a></td><td><code>value_of(12345, 2)</code></td></tr>
+      <tr><td><span data-lang="zh-CN">加减乘</span><span data-lang="en">Add, subtract, multiply</span></td><td><a href="#api-decimal-add"><code>add()</code></a>, <a href="#api-decimal-subtract"><code>subtract()</code></a>, <a href="#api-decimal-multiply"><code>multiply()</code></a></td><td><code>price.multiply(quantity)</code></td></tr>
+      <tr><td><span data-lang="zh-CN">除法</span><span data-lang="en">Division</span></td><td><a href="#api-decimal-divide"><code>divide()</code></a></td><td><code>one.divide(three, mc)</code></td></tr>
+      <tr><td><span data-lang="zh-CN">固定小数位</span><span data-lang="en">Fixed fractional digits</span></td><td><a href="#api-decimal-set-scale"><code>set_scale()</code></a></td><td><code>amount.set_scale(2, mode)</code></td></tr>
+      <tr><td><span data-lang="zh-CN">数值比较</span><span data-lang="en">Numeric comparison</span></td><td><a href="#api-decimal-compare"><code>compare_to()</code></a></td><td><code>a.compare_to(b) == 0</code></td></tr>
+      <tr><td><span data-lang="zh-CN">表示相等</span><span data-lang="en">Representation equality</span></td><td><a href="#api-decimal-equals"><code>equals()</code></a></td><td><code>a.equals(b)</code></td></tr>
+      <tr><td><span data-lang="zh-CN">去除尾零</span><span data-lang="en">Remove trailing zeros</span></td><td><a href="#api-decimal-strip-zeros"><code>strip_trailing_zeros()</code></a></td><td><code>decimal("2.00").strip_trailing_zeros()</code></td></tr>
+      <tr><td><span data-lang="zh-CN">精确整数转换</span><span data-lang="en">Exact integer conversion</span></td><td><a href="#api-decimal-exact-integer"><code>to_int_exact()</code></a>, <a href="#api-decimal-big-integer"><code>to_big_integer_exact()</code></a></td><td><code>decimal("42.00").to_int_exact()</code></td></tr>
+      <tr><td><span data-lang="zh-CN">普通字符串</span><span data-lang="en">Plain decimal text</span></td><td><a href="#api-decimal-plain"><code>to_plain_string()</code></a></td><td><code>amount.to_plain_string()</code></td></tr>
+      <tr><td><span data-lang="zh-CN">科学和工程计数</span><span data-lang="en">Scientific and engineering notation</span></td><td><a href="#api-decimal-to-string"><code>to_string()</code></a>, <a href="#api-decimal-engineering"><code>to_engineering_string()</code></a></td><td><code>value.to_engineering_string()</code></td></tr>
+      <tr><td><span data-lang="zh-CN">任意精度整数</span><span data-lang="en">Arbitrary-precision integers</span></td><td><a href="#advanced-bigint"><code>bigint</code></a></td><td><code>a.multiply(b).gcd(m)</code></td></tr>
+    </tbody></table>
+
+      <article class="function-doc" id="common-construction" data-search-name="common construction value_of 常用构造"><h3><span data-lang="zh-CN">精确构造</span><span data-lang="en">Exact construction</span></h3><p data-lang="zh-CN">文本用于精确业务小数,整数用于计数,未缩放整数和 scale 用于数据库或协议字段.</p><p data-lang="en">Use text for exact business decimals, integers for counts, and an unscaled integer plus scale for database or protocol fields.</p><pre><code class="language-cpp" data-example="common-construction">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal price("19.90");
+  const decimal canonical = decimal::value_of(0.1);
+  const decimal database_value = decimal::value_of(12345, 2);
+
+  std::cout &lt;&lt; price.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; canonical.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; database_value.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">19.90 0.1 123.45</code></pre><div class="callout warning"><strong><span data-lang="zh-CN">常见坑.</span><span data-lang="en">Common pitfall.</span></strong> <span data-lang="zh-CN"><code>decimal(0.1)</code> 保留二进制 double 的精确数值. 需要人类输入的 0.1 时使用 <code>decimal("0.1")</code>,与既有 double 接口互操作时通常使用 <code>value_of(0.1)</code>.</span><span data-lang="en"><code>decimal(0.1)</code> preserves the exact binary double. Use <code>decimal("0.1")</code> for human-entered 0.1 and normally use <code>value_of(0.1)</code> when interoperating with an existing double API.</span></div><p><a href="#api-decimal-constructor"><span data-lang="zh-CN">查看构造函数详情</span><span data-lang="en">Constructor details</span></a> · <a href="#api-decimal-value-of"><code>value_of()</code></a></p></article>
+
+      <article class="function-doc" id="common-arithmetic" data-search-name="common add subtract multiply 常用算术"><h3><span data-lang="zh-CN">加法,减法和乘法</span><span data-lang="en">Add, subtract, and multiply</span></h3><p data-lang="zh-CN">不带 context 的重载精确计算. 带 context 的重载限制结果的有效数字位数.</p><p data-lang="en">Overloads without a context calculate exactly. Context overloads limit significant digits in the result.</p><pre><code class="language-cpp" data-example="common-arithmetic">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal increased = decimal("100.00").add(decimal("25.50"));
+  const decimal adjusted = increased.subtract(decimal("0.50"));
+  const decimal scaled = adjusted.multiply(decimal("1.2"));
+
+  std::cout &lt;&lt; increased.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; adjusted.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; scaled.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">125.50 125.00 150.000</code></pre><div class="callout warning"><strong><span data-lang="zh-CN">常见坑.</span><span data-lang="en">Common pitfall.</span></strong> <span data-lang="zh-CN"><code>decimal</code> 是不可变值对象,这些函数都返回新值. 精确乘法的结果 scale 是两个输入 scale 之和,因此结果可能保留额外的零.</span><span data-lang="en"><code>decimal</code> is immutable, so every operation returns a new value. Exact multiplication adds input scales and may preserve additional zeros.</span></div><p><a href="#api-decimal-add"><code>add()</code></a> · <a href="#api-decimal-subtract"><code>subtract()</code></a> · <a href="#api-decimal-multiply"><code>multiply()</code></a></p></article>
+
+      <article class="function-doc" id="common-division-scale" data-search-name="common divide set_scale rounding 常用除法舍入"><h3><span data-lang="zh-CN">除法和固定小数位</span><span data-lang="en">Division and fixed scale</span></h3><p data-lang="zh-CN">精确除法适合有限十进制结果. 非终止结果必须给出目标 scale 或有限精度 context.</p><p data-lang="en">Exact division is for terminating decimal results. Nonterminating results require a target scale or finite-precision context.</p><pre><code class="language-cpp" data-example="common-division-scale">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal exact = decimal("1").divide(decimal("8"));
+  const decimal repeating = decimal("1").divide(
+      decimal("3"), math_context(8, round_mode::HALF_EVEN));
+  const decimal posted = decimal("10.005").set_scale(2, round_mode::HALF_UP);
+
+  std::cout &lt;&lt; exact.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; repeating.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; posted.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">0.125 0.33333333 10.01</code></pre><div class="callout warning"><strong><span data-lang="zh-CN">常见坑.</span><span data-lang="en">Common pitfall.</span></strong> <span data-lang="zh-CN"><code>decimal("1").divide(decimal("3"))</code> 无法返回有限的精确小数,因此会抛异常. 降低 scale 也可能丢弃非零数字,应明确选择舍入模式.</span><span data-lang="en"><code>decimal("1").divide(decimal("3"))</code> cannot return a finite exact decimal and throws. Reducing scale can also discard nonzero digits, so choose a rounding mode explicitly.</span></div><p><a href="#api-decimal-divide"><code>divide()</code></a> · <a href="#api-decimal-set-scale"><code>set_scale()</code></a> · <a href="#advanced-round-mode"><code>round_mode</code></a></p></article>
+
+      <article class="function-doc" id="common-comparison" data-search-name="common compare_to equals strip_trailing_zeros 常用比较"><h3><span data-lang="zh-CN">比较和相等判断</span><span data-lang="en">Comparison and equality</span></h3><p data-lang="zh-CN"><code>compare_to()</code> 比较数学值,<code>equals()</code> 比较数值和 scale. 两种语义都保留是为了让调用方明确选择.</p><p data-lang="en"><code>compare_to()</code> compares mathematical values, while <code>equals()</code> compares both value and scale. Both are available so callers choose the intended semantics.</p><pre><code class="language-cpp" data-example="common-comparison">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal first("2.0");
+  const decimal second("2.00");
+
+  std::cout &lt;&lt; std::boolalpha
+            &lt;&lt; (first.compare_to(second) == 0) &lt;&lt; ' '
+            &lt;&lt; first.equals(second) &lt;&lt; ' '
+            &lt;&lt; first.strip_trailing_zeros().equals(second.strip_trailing_zeros()) &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">true false true</code></pre><div class="callout warning"><strong><span data-lang="zh-CN">常见坑.</span><span data-lang="en">Common pitfall.</span></strong> <span data-lang="zh-CN">不要使用 <code>equals()</code> 判断只关心金额数值的相等关系. 如果 scale 不属于业务身份,使用 <code>compare_to() == 0</code>.</span><span data-lang="en">Do not use <code>equals()</code> when only the numeric amount matters. If scale is not part of business identity, use <code>compare_to() == 0</code>.</span></div><p><a href="#api-decimal-compare"><code>compare_to()</code></a> · <a href="#api-decimal-equals"><code>equals()</code></a> · <a href="#api-decimal-strip-zeros"><code>strip_trailing_zeros()</code></a></p></article>
+
+      <article class="function-doc" id="common-conversion-format" data-search-name="common conversion to_int_exact to_plain_string 常用转换格式"><h3><span data-lang="zh-CN">转换和字符串输出</span><span data-lang="en">Conversions and text output</span></h3><p data-lang="zh-CN">exact 整数转换用于拒绝非零小数和范围溢出. 字符串函数根据是否允许指数表示进行选择.</p><p data-lang="en">Exact integer conversions reject nonzero fractions and range overflow. Choose a string function based on whether exponent notation is allowed.</p><pre><code class="language-cpp" data-example="common-conversion-format">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+
+int main() {
+  const std::int32_t count = decimal("42.00").to_int_exact();
+  const bigint whole = decimal("123.45").to_big_integer();
+  const decimal small("0.000000123");
+
+  std::cout &lt;&lt; count &lt;&lt; ' ' &lt;&lt; whole.to_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; small.to_string() &lt;&lt; ' ' &lt;&lt; small.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">42 123
+1.23E-7 0.000000123</code></pre><div class="callout warning"><strong><span data-lang="zh-CN">常见坑.</span><span data-lang="en">Common pitfall.</span></strong> <span data-lang="zh-CN"><code>to_int()</code> 和 <code>to_long()</code> 会截掉小数,超范围时还可能只保留低位. <code>to_string()</code> 可能产生科学计数法,金额,JSON 和 UI 通常使用 <code>to_plain_string()</code>.</span><span data-lang="en"><code>to_int()</code> and <code>to_long()</code> truncate fractions and may retain only low bits when out of range. <code>to_string()</code> may emit scientific notation; money, JSON, and UI output usually use <code>to_plain_string()</code>.</span></div><p><a href="#api-decimal-exact-integer"><span data-lang="zh-CN">精确整数转换</span><span data-lang="en">Exact integer conversions</span></a> · <a href="#api-decimal-big-integer"><code>to_big_integer()</code></a> · <a href="#formatting"><span data-lang="zh-CN">字符串格式</span><span data-lang="en">String formats</span></a></p></article>
+
+      <article class="function-doc" id="common-bigint" data-search-name="common bigint add multiply divide gcd pow 常用大整数"><h3><span data-lang="zh-CN">常用 bigint 运算</span><span data-lang="en">Common bigint operations</span></h3><p data-lang="zh-CN">当问题本身只需要整数时直接使用 <code>bigint</code>,避免人为引入 decimal scale.</p><p data-lang="en">Use <code>bigint</code> directly when the problem is purely integral instead of introducing a decimal scale.</p><pre><code class="language-cpp" data-example="common-bigint">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+
+int main() {
+  const bigint value("12345678901234567890");
+  const bigint ten(10);
+
+  std::cout &lt;&lt; value.add(ten).to_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.divide(ten).to_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.gcd(bigint(90)).to_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; bigint(12).pow(5).to_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">12345678901234567900
+1234567890123456789
+90
+248832</code></pre><div class="callout warning"><strong><span data-lang="zh-CN">常见坑.</span><span data-lang="en">Common pitfall.</span></strong> <span data-lang="zh-CN"><code>bigint</code> 没有小数和 scale. 需要小数点时,使用 <code>decimal(bigint_value, scale)</code> 明确指定 scale.</span><span data-lang="en"><code>bigint</code> has no fraction or scale. When a decimal point is required, use <code>decimal(bigint_value, scale)</code> and provide the scale explicitly.</span></div><p><a href="#advanced-bigint"><span data-lang="zh-CN">查看 bigint 概览</span><span data-lang="en">bigint overview</span></a></p></article>
+
+      <article class="function-doc" id="double-interop" data-search-name="double interoperability floating point binary 浮点互操作"><h3><span data-lang="zh-CN">正确使用 double</span><span data-lang="en">Using double correctly</span></h3><p data-lang="zh-CN">三个看似相同的 <code>0.1</code> 表达不同意图. 选择入口时应判断数据最初来自十进制文本,还是已经存在于二进制浮点变量中.</p><p data-lang="en">Three apparently identical forms of <code>0.1</code> express different intent. Choose based on whether the value originates as decimal text or already exists in a binary floating-point variable.</p><table><thead><tr><th><span data-lang="zh-CN">入口</span><span data-lang="en">Entry point</span></th><th><span data-lang="zh-CN">得到的数值</span><span data-lang="en">Resulting value</span></th><th><span data-lang="zh-CN">适用场景</span><span data-lang="en">Use it for</span></th></tr></thead><tbody><tr><td><code>decimal("0.1")</code></td><td><span data-lang="zh-CN">精确十进制 0.1,并保留文本 scale</span><span data-lang="en">Exact decimal 0.1 with text scale preserved</span></td><td><span data-lang="zh-CN">金额,利率,配置,数据库和协议字段</span><span data-lang="en">Money, rates, configuration, databases, and protocols</span></td></tr><tr><td><code>decimal(0.1)</code></td><td><span data-lang="zh-CN">该 binary64 数值的完整精确十进制值</span><span data-lang="en">The complete exact decimal value of that binary64 value</span></td><td><span data-lang="zh-CN">审计,复现或无损保存已有 double</span><span data-lang="en">Auditing, reproducing, or losslessly preserving an existing double</span></td></tr><tr><td><code>decimal::value_of(0.1)</code></td><td><span data-lang="zh-CN">double 的最短可往返十进制文本</span><span data-lang="en">The shortest round-trippable decimal text for the double</span></td><td><span data-lang="zh-CN">与现有 double API 互操作</span><span data-lang="en">Interoperating with an existing double API</span></td></tr><tr><td><code>value.to_double()</code></td><td><span data-lang="zh-CN">最接近的 double,可能损失精度,下溢或变成 infinity</span><span data-lang="en">The nearest double, possibly losing precision, underflowing, or becoming infinity</span></td><td><span data-lang="zh-CN">图表,统计库和必须接收 double 的外部接口</span><span data-lang="en">Charts, statistics libraries, and APIs that require double</span></td></tr></tbody></table><pre><code class="language-cpp" data-example="double-interop">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+
+int main() {
+  const double input = 0.1;
+  const decimal text("0.1");
+  const decimal exact_binary(input);
+  const decimal canonical = decimal::value_of(input);
+
+  std::cout &lt;&lt; text.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; exact_binary.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; canonical.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; std::boolalpha &lt;&lt; (exact_binary.to_double() == input) &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">0.1
+0.1000000000000000055511151231257827021181583404541015625
+0.1
+true</code></pre><div class="callout warning"><strong><span data-lang="zh-CN">使用规则.</span><span data-lang="en">Rule of thumb.</span></strong> <span data-lang="zh-CN">不要先把十进制文本解析为 double 再构造 decimal,这会提前丢失十进制信息. 金额计算过程中也不要反复调用 <code>to_double()</code> 和重新构造 decimal.</span><span data-lang="en">Do not parse decimal text into a double before constructing decimal; that loses decimal information early. Do not repeatedly call <code>to_double()</code> and reconstruct decimal during money calculations.</span></div>
+
+        <h3 id="double-special-values"><span data-lang="zh-CN">特殊值和范围</span><span data-lang="en">Special values and range</span></h3><p data-lang="zh-CN"><code>decimal</code> 不表示 NaN 或 infinity. 两种 double 入口都会拒绝这些输入. 反向转换 <code>to_double()</code> 不抛出范围异常,而是遵循浮点转换结果,可能得到 infinity 或带符号的零.</p><p data-lang="en"><code>decimal</code> does not represent NaN or infinity, and both double entry points reject them. The reverse <code>to_double()</code> conversion does not throw for range; it follows floating-point conversion and may produce infinity or signed zero.</p><pre><code class="language-cpp" data-example="double-special-values">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;cmath&gt;
+#include &lt;iostream&gt;
+#include &lt;limits&gt;
+#include &lt;stdexcept&gt;
+
+int main() {
+  try {
+    static_cast&lt;void&gt;(decimal(std::numeric_limits&lt;double&gt;::infinity()));
+  } catch (const std::runtime_error&amp;) {
+    std::cout &lt;&lt; "infinity rejected\n";
+  }
+
+  try {
+    static_cast&lt;void&gt;(decimal::value_of(std::numeric_limits&lt;double&gt;::quiet_NaN()));
+  } catch (const std::runtime_error&amp;) {
+    std::cout &lt;&lt; "nan rejected\n";
+  }
+
+  std::cout &lt;&lt; std::boolalpha
+            &lt;&lt; std::isinf(decimal("1E+10000").to_double()) &lt;&lt; '\n'
+            &lt;&lt; (decimal("1E-10000").to_double() == 0.0) &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">infinity rejected
+nan rejected
+true
+true</code></pre><p><a href="#api-decimal-constructor"><span data-lang="zh-CN">构造函数详情</span><span data-lang="en">Constructor details</span></a> · <a href="#api-decimal-value-of"><code>value_of()</code></a> · <a href="#api-decimal-floating"><code>to_double()</code></a></p></article>
+
+      <article class="function-doc" id="exception-reference" data-search-name="exceptions errors throw invalid_argument runtime_error 异常错误"><h3><span data-lang="zh-CN">异常速查</span><span data-lang="en">Exception quick reference</span></h3><p data-lang="zh-CN">表格只列应用层公开接口能够稳定观察到的异常类型. 异常消息属于当前实现细节,调用方应按异常类型和自己的业务上下文生成错误信息.</p><p data-lang="en">This table lists stable exception types observable from application-facing public APIs. Exception messages are implementation details; callers should report errors using the exception type and their own domain context.</p><table><thead><tr><th><span data-lang="zh-CN">函数</span><span data-lang="en">API</span></th><th><span data-lang="zh-CN">异常</span><span data-lang="en">Exception</span></th><th><span data-lang="zh-CN">触发条件</span><span data-lang="en">Trigger</span></th><th><span data-lang="zh-CN">安全用法</span><span data-lang="en">Safe usage</span></th></tr></thead><tbody>
+        <tr><td><code>decimal(text)</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">空输入,没有数字,非法字符,多个小数点或非法/溢出指数</span><span data-lang="en">Empty input, no digits, illegal characters, repeated decimal points, or malformed/overflowing exponents</span><br><code>decimal("1.2.3")</code></td><td><span data-lang="zh-CN">在记录边界校验并捕获解析错误</span><span data-lang="en">Validate and catch parsing failures at the record boundary</span></td></tr>
+        <tr><td><code>decimal(chars, offset, length)</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN"><code>length &lt;= 0</code> 或所选字符格式非法</span><span data-lang="en"><code>length &lt;= 0</code> or malformed selected characters</span></td><td><span data-lang="zh-CN">调用方必须先保证 buffer,offset 和 length 指向有效内存范围</span><span data-lang="en">The caller must first guarantee that buffer, offset, and length identify valid memory</span></td></tr>
+        <tr><td><code>decimal(double)</code>, <code>value_of(double)</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">输入为 NaN 或正负 infinity</span><span data-lang="en">Input is NaN or positive/negative infinity</span></td><td><code>std::isfinite(value)</code></td></tr>
+        <tr><td><code>math_context(precision)</code></td><td><code>std::invalid_argument</code></td><td><span data-lang="zh-CN"><code>precision &lt; 0</code></span><span data-lang="en"><code>precision &lt; 0</code></span></td><td><span data-lang="zh-CN">0 表示不限精度,正数表示有效数字位数</span><span data-lang="en">Zero means unlimited precision; positive values count significant digits</span></td></tr>
+        <tr><td><code>value_of(int mode)</code>, legacy rounding overloads</td><td><code>std::invalid_argument</code></td><td><span data-lang="zh-CN">整数舍入模式不在 0 到 7</span><span data-lang="en">Integer rounding mode is outside 0 through 7</span></td><td><span data-lang="zh-CN">新代码直接使用 <code>round_mode</code> 枚举</span><span data-lang="en">Use the <code>round_mode</code> enum in new code</span></td></tr>
+        <tr><td><code>divide()</code>, quotient/remainder APIs</td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">除数为零,包括未定义的 0 / 0</span><span data-lang="en">Zero divisor, including undefined 0 / 0</span><br><code>decimal("1").divide(decimal::ZERO)</code></td><td><span data-lang="zh-CN">调用前验证 divisor 非零</span><span data-lang="en">Check that the divisor is nonzero</span></td></tr>
+        <tr><td><code>divide()</code> exact overload</td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">结果为非终止十进制,例如 1 / 3</span><span data-lang="en">The result is nonterminating, such as 1 / 3</span></td><td><span data-lang="zh-CN">传入目标 scale 和模式,或有限精度 <code>math_context</code></span><span data-lang="en">Pass a target scale and mode or a finite-precision <code>math_context</code></span></td></tr>
+        <tr><td><code>divide_to_integral_value(divisor, mc)</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">context precision 无法容纳整数商</span><span data-lang="en">Context precision cannot hold the integer quotient</span></td><td><span data-lang="zh-CN">提高 precision 或使用无 context 重载</span><span data-lang="en">Increase precision or use the overload without a context</span></td></tr>
+        <tr><td><code>set_scale()</code>, rounding APIs</td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN"><code>UNNECESSARY</code> 下必须丢弃非零数字</span><span data-lang="en">Nonzero digits must be discarded under <code>UNNECESSARY</code></span><br><code>decimal("1.1").set_scale(0)</code></td><td><span data-lang="zh-CN">允许舍入时显式传入模式</span><span data-lang="en">Pass an explicit mode when rounding is allowed</span></td></tr>
+        <tr><td><code>move_point_*()</code>, <code>scale_by_power_of_ten()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">scale 计算超出 <code>std::int32_t</code> 范围</span><span data-lang="en">Scale calculation exceeds the <code>std::int32_t</code> range</span></td><td><span data-lang="zh-CN">限制外部位移参数和指数范围</span><span data-lang="en">Bound externally supplied shifts and exponents</span></td></tr>
+        <tr><td><code>to_*_exact()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">存在非零小数或超出目标整数范围</span><span data-lang="en">A nonzero fraction exists or the target integer range is exceeded</span><br><code>decimal("42.5").to_int_exact()</code></td><td><span data-lang="zh-CN">只在数据契约要求整数时使用 exact 转换并捕获错误</span><span data-lang="en">Use exact conversion when the data contract requires an integer and catch rejection</span></td></tr>
+        <tr><td><code>decimal::pow()</code></td><td><code>std::invalid_argument</code></td><td><span data-lang="zh-CN">精确重载使用负指数,指数超出支持范围,或 context precision 不足</span><span data-lang="en">A negative exponent reaches the exact overload, the exponent is unsupported, or context precision is insufficient</span></td><td><span data-lang="zh-CN">负指数使用有限精度 context,并限制外部指数</span><span data-lang="en">Use a finite-precision context for negative exponents and bound external exponents</span></td></tr>
+        <tr><td><code>decimal::sqrt()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">输入为负数,或无限精度/<code>UNNECESSARY</code> 要求无法得到的精确根</span><span data-lang="en">Input is negative, or unlimited precision/<code>UNNECESSARY</code> requires an unavailable exact root</span></td><td><span data-lang="zh-CN">先检查符号,无理数根使用有限精度 context</span><span data-lang="en">Check the sign and use finite precision for irrational roots</span></td></tr>
+        <tr><td><code>bigint(text, radix)</code></td><td><code>std::invalid_argument</code></td><td><span data-lang="zh-CN">空输入,非法符号或数字,radix 不在 2 到 36</span><span data-lang="en">Empty input, illegal sign/digit, or radix outside 2 through 36</span></td><td><span data-lang="zh-CN">在输入边界验证 radix 和文本</span><span data-lang="en">Validate radix and text at the input boundary</span></td></tr>
+        <tr><td><code>bigint::divide()</code>, <code>remainder()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">除数为零</span><span data-lang="en">Divisor is zero</span></td><td><span data-lang="zh-CN">调用前检查 <code>is_zero()</code></span><span data-lang="en">Check <code>is_zero()</code> first</span></td></tr>
+        <tr><td><code>bigint::pow()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">指数为负数</span><span data-lang="en">Exponent is negative</span></td><td><span data-lang="zh-CN">整数幂只传入非负指数</span><span data-lang="en">Pass only nonnegative exponents for integer powers</span></td></tr>
+        <tr><td><code>bigint::sqrt()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">输入为负数</span><span data-lang="en">Input is negative</span></td><td><span data-lang="zh-CN">先检查 <code>signum() &gt;= 0</code></span><span data-lang="en">Check <code>signum() &gt;= 0</code> first</span></td></tr>
+        <tr><td><code>mod()</code>, <code>mod_inverse()</code>, <code>mod_pow()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">模数非正,或所需乘法逆元不存在</span><span data-lang="en">Modulus is nonpositive or a required multiplicative inverse does not exist</span></td><td><span data-lang="zh-CN">使用正模数;求逆前确认 gcd 为 1</span><span data-lang="en">Use a positive modulus and require GCD one before inversion</span></td></tr>
+        <tr><td><code>test_bit()</code>, <code>set_bit()</code>, <code>clear_bit()</code>, <code>flip_bit()</code></td><td><code>std::runtime_error</code></td><td><span data-lang="zh-CN">bit 下标为负数</span><span data-lang="en">Bit index is negative</span></td><td><span data-lang="zh-CN">验证 <code>index &gt;= 0</code></span><span data-lang="en">Require <code>index &gt;= 0</code></span></td></tr>
+      </tbody></table><div class="callout"><span data-lang="zh-CN"><code>to_int()</code>,<code>to_long()</code> 和 <code>to_double()</code> 是非 exact 转换. 它们可能截断,回绕,损失精度,下溢或返回 infinity,通常不会为这些情况抛异常.</span><span data-lang="en"><code>to_int()</code>, <code>to_long()</code>, and <code>to_double()</code> are non-exact conversions. They may truncate, wrap, lose precision, underflow, or return infinity and normally do not throw for those outcomes.</span></div><pre><code class="language-cpp" data-example="exception-reference">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+#include &lt;stdexcept&gt;
+#include &lt;utility&gt;
+
+template &lt;typename Function&gt;
+void report(const char* name, Function&amp;&amp; function) {
+  try {
+    function();
+  } catch (const std::invalid_argument&amp;) {
+    std::cout &lt;&lt; name &lt;&lt; ": invalid_argument\n";
+  } catch (const std::runtime_error&amp;) {
+    std::cout &lt;&lt; name &lt;&lt; ": runtime_error\n";
+  }
+}
+
+int main() {
+  report("decimal text", [] { static_cast&lt;void&gt;(decimal("1.2.3")); });
+  report("math context", [] { static_cast&lt;void&gt;(math_context(-1)); });
+  report("decimal divide", [] { static_cast&lt;void&gt;(decimal("1").divide(decimal::ZERO)); });
+  report("exact divide", [] { static_cast&lt;void&gt;(decimal("1").divide(decimal("3"))); });
+  report("scale", [] { static_cast&lt;void&gt;(decimal("1.1").set_scale(0)); });
+  report("exact integer", [] { static_cast&lt;void&gt;(decimal("1.1").to_int_exact()); });
+  report("decimal power", [] { static_cast&lt;void&gt;(decimal("2").pow(-1)); });
+  report("decimal root", [] { static_cast&lt;void&gt;(decimal("-1").sqrt(math_context::DECIMAL64)); });
+  report("bigint text", [] { static_cast&lt;void&gt;(bigint("10", 1)); });
+  report("bigint divide", [] { static_cast&lt;void&gt;(bigint(1).divide(bigint::ZERO)); });
+  report("bigint power", [] { static_cast&lt;void&gt;(bigint(2).pow(-1)); });
+  report("bigint root", [] { static_cast&lt;void&gt;(bigint(-1).sqrt()); });
+  report("bigint modulus", [] { static_cast&lt;void&gt;(bigint(2).mod(bigint::ZERO)); });
+  report("bigint bit", [] { static_cast&lt;void&gt;(bigint(1).test_bit(-1)); });
+}</code></pre><pre class="output"><code class="language-text">decimal text: runtime_error
+math context: invalid_argument
+decimal divide: runtime_error
+exact divide: runtime_error
+scale: runtime_error
+exact integer: runtime_error
+decimal power: invalid_argument
+decimal root: runtime_error
+bigint text: invalid_argument
+bigint divide: runtime_error
+bigint power: runtime_error
+bigint root: runtime_error
+bigint modulus: runtime_error
+bigint bit: runtime_error</code></pre></article>
+    </section>
+
+    <section id="rounding"><h2><span data-lang="zh-CN">精度与舍入</span><span data-lang="en">Precision and rounding</span></h2><p data-lang="zh-CN"><code>math_context(precision, mode)</code> 控制一次运算最多保留多少位有效数字；<code>round_mode</code> 决定丢弃部分如何处理。它们只是调用 <code>decimal</code> 函数时需要的参数。</p><p data-lang="en"><code>math_context(precision, mode)</code> limits significant digits for an operation; <code>round_mode</code> decides how discarded digits are handled. They are supporting arguments to <code>decimal</code> operations.</p><table><thead><tr><th>Mode</th><th><span data-lang="zh-CN">行为</span><span data-lang="en">Behavior</span></th><th>2.5 → integer</th></tr></thead><tbody><tr><td><code>UP</code></td><td><span data-lang="zh-CN">远离零</span><span data-lang="en">Away from zero</span></td><td>3</td></tr><tr><td><code>DOWN</code></td><td><span data-lang="zh-CN">向零截断</span><span data-lang="en">Toward zero</span></td><td>2</td></tr><tr><td><code>CEILING</code> / <code>FLOOR</code></td><td><span data-lang="zh-CN">向正/负无穷</span><span data-lang="en">Toward +/− infinity</span></td><td>3 / 2</td></tr><tr><td><code>HALF_UP</code></td><td><span data-lang="zh-CN">五入</span><span data-lang="en">Ties away from zero</span></td><td>3</td></tr><tr><td><code>HALF_DOWN</code></td><td><span data-lang="zh-CN">五舍</span><span data-lang="en">Ties toward zero</span></td><td>2</td></tr><tr><td><code>HALF_EVEN</code></td><td><span data-lang="zh-CN">银行家舍入</span><span data-lang="en">Ties to even</span></td><td>2</td></tr><tr><td><code>UNNECESSARY</code></td><td><span data-lang="zh-CN">禁止发生舍入</span><span data-lang="en">Rounding forbidden</span></td><td><span data-lang="zh-CN">抛异常</span><span data-lang="en">throws</span></td></tr></tbody></table><pre><code class="language-cpp">math_context money(12, round_mode::HALF_EVEN);
+decimal result = decimal("1").divide(decimal("3"), money); // 0.333333333333</code></pre></section>
+
+    <section id="construction" class="api-group"><h2><span data-lang="zh-CN">创建 decimal</span><span data-lang="en">Creating decimal values</span></h2><p class="lead" data-lang="zh-CN">优先使用字符串构造精确的小数字面值，使用整数构造计数值。</p><p class="lead" data-lang="en">Prefer strings for exact decimal literals and integer constructors for counts.</p>
+      <article class="function-doc" id="api-decimal-constructor" data-search-name="decimal constructors 构造"><h3>decimal(...) <span class="kind">constructor</span></h3><p class="summary" data-lang="zh-CN">从字符串、整数、浮点数或“未缩放整数 + scale”创建数值。下面逐项列出头文件提供的构造重载。</p><p class="summary" data-lang="en">Creates a value from text, integers, floating point, or an unscaled integer plus scale. Every constructor overload from the header is listed below.</p><pre class="signature"><code>decimal();
+decimal(const char* text);
+decimal(const char* text, const math_context&amp; mc);
+decimal(const char* text, std::int32_t offset, std::int32_t length,
+        const math_context&amp; mc = math_context::UNLIMITED);
+decimal(const std::string&amp; text);
+decimal(const std::string&amp; text, const math_context&amp; mc);
+decimal(std::string_view text);
+decimal(std::string_view text, const math_context&amp; mc);
+decimal(std::int32_t value);
+decimal(std::int32_t value, const math_context&amp; mc);
+decimal(std::int64_t value);
+decimal(std::int64_t value, const math_context&amp; mc);
+decimal(double value);
+decimal(double value, const math_context&amp; mc);
+decimal(const bigint&amp; value);
+decimal(const bigint&amp; value, const math_context&amp; mc);
+decimal(const bigint&amp; unscaled, std::int32_t scale);
+decimal(const bigint&amp; unscaled, std::int32_t scale, const math_context&amp; mc);</code></pre><p data-lang="zh-CN">此外支持默认的复制构造、移动构造、复制赋值和移动赋值。带 <code>bigint</code> 的重载用于超过 64 位的未缩放整数；普通业务输入通常不需要直接使用它。</p><p data-lang="en">Default copy/move construction and copy/move assignment are also supported. The <code>bigint</code> overloads accept unscaled integers beyond 64 bits and are rarely needed for ordinary input.</p><div class="usage"><strong><span data-lang="zh-CN">怎么用</span><span data-lang="en">Usage</span></strong><pre><code class="language-cpp">decimal empty;                         // 0
+decimal exact("123.4500");             // 保留 scale 4
+decimal count(std::int64_t{42});       // 42
+decimal rounded("1.2345", math_context(3, round_mode::HALF_UP)); // 1.23</code></pre></div><div class="callout warning"><span data-lang="zh-CN"><code>decimal(0.1)</code> 表示该二进制 <code>double</code> 的精确值，通常不是文本意义上的 0.1。业务小数请写 <code>decimal("0.1")</code>。</span><span data-lang="en"><code>decimal(0.1)</code> preserves the exact binary <code>double</code>, usually not textual 0.1. Use <code>decimal("0.1")</code> for business values.</span></div></article>
+      <article class="function-doc" id="api-decimal-value-of" data-search-name="value_of factory 工厂"><h3>value_of() <span class="kind">static</span></h3><p data-lang="zh-CN">从整数、double 或未缩放值快速创建 <code>decimal</code>。<code>value_of(double)</code> 使用 double 的规范文本形式，比直接 double 构造更符合日常预期。带 <code>precision</code> 的形式主要供库内部复用已知精度。</p><p data-lang="en">Creates a value from an integer, double, or unscaled value. <code>value_of(double)</code> uses the canonical text form and is usually less surprising than the direct double constructor. Precision-bearing forms mainly reuse known precision internally.</p><pre><code>static decimal value_of(std::int64_t value);
+static decimal value_of(double value);
+static decimal value_of(std::int64_t unscaled, std::int32_t scale);
+static decimal value_of(std::int64_t unscaled, std::int32_t scale,
+                        std::int32_t precision);
+static decimal value_of(const bigint&amp; unscaled, std::int32_t scale,
+                        std::int32_t precision);</code></pre><pre><code class="language-cpp">decimal a = decimal::value_of(250);       // 250
+decimal b = decimal::value_of(12345, 2);  // 123.45
+decimal c = decimal::value_of(0.1);       // 0.1</code></pre></article>
+      <article class="function-doc" id="api-decimal-constants" data-search-name="ZERO ONE TWO TEN constants 常量"><h3>ZERO, ONE, TWO, TEN… <span class="kind">constant</span></h3><p data-lang="zh-CN">复用常见不可变常量，避免重复构造。</p><p data-lang="en">Reuse common immutable values without reconstructing them.</p><pre><code>decimal::ZERO; decimal::ONE; decimal::TWO; decimal::TEN;
+decimal::ONE_TENTH; decimal::ONE_HALF;</code></pre><pre><code class="language-cpp">decimal percentage = decimal::ONE_TENTH.multiply(decimal(15)); // 1.5</code></pre></article>
+    </section>
+
+    <section id="arithmetic" class="api-group"><h2><span data-lang="zh-CN">算术与除法</span><span data-lang="en">Arithmetic and division</span></h2>
+      <article class="function-doc" id="api-decimal-add" data-search-name="add addition 加法"><h3>add()</h3><p data-lang="zh-CN">返回两数之和；不带 context 时精确计算，结果通常采用两者较大的 scale。</p><p data-lang="en">Returns the sum. Without a context it is exact and normally uses the larger input scale.</p><pre><code>decimal add(const decimal&amp; augend) const;
+decimal add(const decimal&amp; augend, const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal total = decimal("12.30").add(decimal("0.45")); // 12.75
+decimal short_sum = decimal("123.4").add(decimal("0.06"), math_context(3)); // 123</code></pre></article>
+      <article class="function-doc" id="api-decimal-subtract" data-search-name="subtract subtraction 减法"><h3>subtract()</h3><p data-lang="zh-CN">返回当前值减去 <code>subtrahend</code> 的结果；context 重载在运算后限制有效位数。</p><p data-lang="en">Returns this value minus <code>subtrahend</code>; the context overload limits significant digits.</p><pre><code>decimal subtract(const decimal&amp; subtrahend) const;
+decimal subtract(const decimal&amp; subtrahend, const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal balance = decimal("100.00").subtract(decimal("36.75")); // 63.25</code></pre></article>
+      <article class="function-doc" id="api-decimal-multiply" data-search-name="multiply multiplication 乘法"><h3>multiply()</h3><p data-lang="zh-CN">返回乘积；精确重载的结果 scale 是两个输入 scale 之和。</p><p data-lang="en">Returns the product; the exact overload adds the two input scales.</p><pre><code>decimal multiply(const decimal&amp; multiplicand) const;
+decimal multiply(const decimal&amp; multiplicand, const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal subtotal = decimal("19.99").multiply(decimal(3)); // 59.97
+decimal tax = subtotal.multiply(decimal("0.13"), math_context(8));</code></pre></article>
+      <article class="function-doc" id="api-decimal-divide" data-search-name="divide division 除法"><h3>divide()</h3><p data-lang="zh-CN">返回商。选择重载的关键是：结果必须完全精确、沿用当前 scale、固定目标 scale，还是固定有效位数。整数舍入模式重载是兼容接口，新代码优先使用 <code>round_mode</code>。</p><p data-lang="en">Returns a quotient. Choose an overload based on exactness, the current scale, a target scale, or significant-digit precision. Integer rounding-mode overloads are compatibility APIs; prefer <code>round_mode</code> in new code.</p><pre><code>decimal divide(const decimal&amp; divisor) const;
+decimal divide(const decimal&amp; divisor, round_mode mode) const;
+decimal divide(const decimal&amp; divisor, std::int32_t legacy_mode) const;
+decimal divide(const decimal&amp; divisor, std::int32_t scale,
+               round_mode mode) const;
+decimal divide(const decimal&amp; divisor, std::int32_t scale,
+               std::int32_t legacy_mode) const;
+decimal divide(const decimal&amp; divisor, const math_context&amp; mc) const;</code></pre><table><thead><tr><th><span data-lang="zh-CN">需求</span><span data-lang="en">Need</span></th><th><span data-lang="zh-CN">调用</span><span data-lang="en">Call</span></th></tr></thead><tbody><tr><td><span data-lang="zh-CN">可终止的精确小数</span><span data-lang="en">Exact terminating decimal</span></td><td><code>a.divide(b)</code></td></tr><tr><td><span data-lang="zh-CN">沿用被除数 scale</span><span data-lang="en">Use dividend scale</span></td><td><code>a.divide(b, HALF_UP)</code></td></tr><tr><td><span data-lang="zh-CN">固定 2 位小数</span><span data-lang="en">Exactly 2 fractional digits</span></td><td><code>a.divide(b, 2, HALF_UP)</code></td></tr><tr><td><span data-lang="zh-CN">最多 12 位有效数字</span><span data-lang="en">Up to 12 significant digits</span></td><td><code>a.divide(b, math_context(12, HALF_EVEN))</code></td></tr></tbody></table><pre><code class="language-cpp">decimal exact = decimal("1").divide(decimal("4")); // 0.25
+decimal money = decimal("10").divide(decimal("3"), 2, round_mode::HALF_UP); // 3.33
+decimal calc = decimal("1").divide(decimal("3"), math_context(6)); // 0.333333</code></pre><div class="callout warning"><span data-lang="zh-CN"><code>1 / 3</code> 没有有限十进制展开，调用无参数舍入的精确重载会抛异常；除数为零也会抛异常。</span><span data-lang="en"><code>1 / 3</code> has no terminating decimal expansion, so the exact overload throws. Division by zero also throws.</span></div></article>
+      <article class="function-doc" id="api-decimal-divide-integer" data-search-name="divide_to_integral_value integer quotient 整数商"><h3>divide_to_integral_value()</h3><p data-lang="zh-CN">返回除法结果的整数部分，不进行普通意义的四舍五入；context 只限制整数商允许的精度。</p><p data-lang="en">Returns the integer part of a quotient without conventional rounding; a context limits the quotient precision.</p><pre><code>decimal divide_to_integral_value(const decimal&amp; divisor) const;
+decimal divide_to_integral_value(const decimal&amp; divisor, const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal boxes = decimal("17").divide_to_integral_value(decimal("5")); // 3</code></pre></article>
+      <article class="function-doc" id="api-decimal-remainder" data-search-name="remainder modulo 余数"><h3>remainder()</h3><p data-lang="zh-CN">返回 <code>this - divide_to_integral_value(divisor) × divisor</code>。结果可能为负，不等同于始终非负的数学模。</p><p data-lang="en">Returns <code>this - divide_to_integral_value(divisor) × divisor</code>. It may be negative and is not a nonnegative mathematical modulo.</p><pre><code>decimal remainder(const decimal&amp; divisor) const;
+decimal remainder(const decimal&amp; divisor, const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal left = decimal("17").remainder(decimal("5")); // 2</code></pre></article>
+      <article class="function-doc" id="api-decimal-divide-remainder" data-search-name="divide_and_remainder quotient remainder 商余数"><h3>divide_and_remainder()</h3><p data-lang="zh-CN">一次返回整数商和余数，避免分别计算。</p><p data-lang="en">Returns the integer quotient and remainder together, avoiding separate calculations.</p><pre><code>std::pair&lt;decimal, decimal&gt; divide_and_remainder(const decimal&amp;) const;
+std::pair&lt;decimal, decimal&gt; divide_and_remainder(const decimal&amp;, const math_context&amp;) const;</code></pre><pre><code class="language-cpp">auto [quotient, remainder] = decimal("17").divide_and_remainder(decimal("5"));
+// quotient = 3, remainder = 2</code></pre></article>
+    </section>
+
+    <section id="scale-round" class="api-group"><h2><span data-lang="zh-CN">标度与舍入</span><span data-lang="en">Scale and rounding</span></h2>
+      <article class="function-doc" id="api-decimal-set-scale" data-search-name="set_scale scale rounding 小数位"><h3>set_scale()</h3><p data-lang="zh-CN">设置小数点右侧位数。增加 scale 只补零；减少 scale 可能丢弃数字，因此通常应显式给出舍入模式。整数模式是兼容重载。</p><p data-lang="en">Sets digits to the right of the decimal point. Increasing scale appends zeros; decreasing it may discard digits and should normally specify a rounding mode. The integer mode is a compatibility overload.</p><pre><code>decimal set_scale(std::int32_t new_scale) const;
+decimal set_scale(std::int32_t new_scale, round_mode mode) const;
+decimal set_scale(std::int32_t new_scale, std::int32_t legacy_mode) const;</code></pre><pre><code class="language-cpp">decimal cents = decimal("12.345").set_scale(2, round_mode::HALF_UP); // 12.35
+decimal padded = decimal("12").set_scale(2); // 12.00</code></pre></article>
+      <article class="function-doc" id="api-decimal-plus-round" data-search-name="plus round context 舍入"><h3>plus() / round()</h3><p data-lang="zh-CN"><code>plus()</code> 不带参数时返回同值；<code>plus(mc)</code> 和 <code>round(mc)</code> 都按 context 舍入，适合在计算边界统一精度。</p><p data-lang="en"><code>plus()</code> without arguments preserves the value; <code>plus(mc)</code> and <code>round(mc)</code> round to a context, useful at calculation boundaries.</p><pre><code>decimal plus() const;
+decimal plus(const math_context&amp; mc) const;
+decimal round(const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal x("123.456");
+decimal a = x.round(math_context(4, round_mode::HALF_EVEN)); // 123.5
+decimal b = x.plus(math_context(3, round_mode::DOWN));       // 123</code></pre></article>
+      <article class="function-doc" id="api-decimal-move-point" data-search-name="move_point_left move_point_right decimal point 小数点"><h3>move_point_left() / move_point_right()</h3><p data-lang="zh-CN">按十进制位数移动小数点；参数为负数时方向反转。</p><p data-lang="en">Moves the decimal point by a decimal digit count; a negative argument reverses direction.</p><pre><code>decimal move_point_left(std::int32_t n) const;
+decimal move_point_right(std::int32_t n) const;</code></pre><pre><code class="language-cpp">decimal x("123.45");
+x.move_point_left(2);  // 1.2345
+x.move_point_right(2); // 12345</code></pre></article>
+      <article class="function-doc" id="api-decimal-scale-power" data-search-name="scale_by_power_of_ten power ten 十次幂"><h3>scale_by_power_of_ten()</h3><p data-lang="zh-CN">返回 <code>this × 10^n</code>，通过调整 scale 实现，适合单位换算。</p><p data-lang="en">Returns <code>this × 10^n</code> by adjusting scale, useful for unit conversion.</p><pre><code>decimal scale_by_power_of_ten(std::int32_t n) const;</code></pre><pre><code class="language-cpp">decimal("1.25").scale_by_power_of_ten(3); // 1250</code></pre></article>
+      <article class="function-doc" id="api-decimal-strip-zeros" data-search-name="strip_trailing_zeros trailing zero 去尾零"><h3>strip_trailing_zeros()</h3><p data-lang="zh-CN">移除表示中的十进制尾随零，同时保持数值不变；零会规范为 scale 0。</p><p data-lang="en">Removes representational trailing decimal zeros while preserving numeric value; zero is normalized to scale 0.</p><pre><code>decimal strip_trailing_zeros() const;</code></pre><pre><code class="language-cpp">decimal x = decimal("123.4500").strip_trailing_zeros(); // 123.45, scale 2</code></pre></article>
+    </section>
+
+    <section id="unary" class="api-group"><h2><span data-lang="zh-CN">符号、幂与平方根</span><span data-lang="en">Signs, powers, and roots</span></h2>
+      <article class="function-doc" id="api-decimal-abs" data-search-name="abs absolute 绝对值"><h3>abs()</h3><p data-lang="zh-CN">返回绝对值；context 重载同时对结果舍入。</p><p data-lang="en">Returns the absolute value; the context overload also rounds the result.</p><pre><code>decimal abs() const;
+decimal abs(const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal("-12.30").abs(); // 12.30</code></pre></article>
+      <article class="function-doc" id="api-decimal-negate" data-search-name="negate negative 相反数"><h3>negate()</h3><p data-lang="zh-CN">返回符号相反的数；零仍为零。</p><p data-lang="en">Returns the value with its sign reversed; zero remains zero.</p><pre><code>decimal negate() const;
+decimal negate(const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal("12.30").negate(); // -12.30</code></pre></article>
+      <article class="function-doc" id="api-decimal-pow" data-search-name="pow exponent power 幂"><h3>pow()</h3><p data-lang="zh-CN">计算整数次幂。无 context 重载只接受非负指数；context 重载允许负指数并按指定精度计算倒数。</p><p data-lang="en">Raises the value to an integer power. The exact overload accepts nonnegative exponents; the context overload also supports negative exponents using rounded reciprocals.</p><pre><code>decimal pow(std::int32_t exponent) const;
+decimal pow(std::int32_t exponent, const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal("1.05").pow(2);                    // 1.1025
+decimal("2").pow(-3, math_context(8));      // 0.125</code></pre></article>
+      <article class="function-doc" id="api-decimal-sqrt" data-search-name="sqrt square root 平方根"><h3>sqrt()</h3><p data-lang="zh-CN">按 context 返回平方根。负数抛异常；无限精度或 <code>UNNECESSARY</code> 要求结果能够精确表示。</p><p data-lang="en">Returns a square root under a context. Negative inputs throw; unlimited precision or <code>UNNECESSARY</code> requires an exact result.</p><pre><code>decimal sqrt(const math_context&amp; mc) const;</code></pre><pre><code class="language-cpp">decimal root = decimal("2").sqrt(math_context(16, round_mode::HALF_EVEN));
+// 1.414213562373095</code></pre></article>
+    </section>
+
+    <section id="inspect-compare" class="api-group"><h2><span data-lang="zh-CN">检查与比较</span><span data-lang="en">Inspection and comparison</span></h2>
+      <article class="function-doc" id="api-decimal-sign-zero" data-search-name="signum is_zero sign zero 正负零"><h3>signum() / is_zero()</h3><p data-lang="zh-CN"><code>signum()</code> 返回 -1、0 或 1；<code>is_zero()</code> 是直接判断零的便捷函数。</p><p data-lang="en"><code>signum()</code> returns -1, 0, or 1; <code>is_zero()</code> is the direct zero check.</p><pre><code>std::int32_t signum() const;
+bool is_zero() const;</code></pre><pre><code class="language-cpp">decimal("-0.01").signum(); // -1
+decimal("0.00").is_zero(); // true</code></pre></article>
+      <article class="function-doc" id="api-decimal-scale-precision" data-search-name="scale precision 标度 精度"><h3>scale() / precision()</h3><p data-lang="zh-CN">读取表示属性。scale 是小数位数，precision 是未缩放值的有效数字位数。</p><p data-lang="en">Reads representation properties. Scale is the fractional digit count; precision is the significant digit count of the unscaled value.</p><pre><code>std::int32_t scale() const;
+std::int32_t precision() const;</code></pre><pre><code class="language-cpp">decimal x("123.4500");
+// x.scale() == 4; x.precision() == 7</code></pre></article>
+      <article class="function-doc" id="api-decimal-unscaled" data-search-name="unscaled_value unscaled_long_value 未缩放"><h3>unscaled_value()</h3><p data-lang="zh-CN">读取未缩放整数。任意精度版本返回 <code>bigint</code>；long 版本适合已知范围较小的数据，exact 版本在溢出时抛异常。</p><p data-lang="en">Reads the unscaled integer. The arbitrary-precision form returns <code>bigint</code>; long forms suit known-small values, and the exact form throws on overflow.</p><pre><code>bigint unscaled_value() const;
+std::int64_t unscaled_long_value() const;
+std::int64_t unscaled_long_value_exact() const;</code></pre><pre><code class="language-cpp">decimal x("123.45");
+std::int64_t raw = x.unscaled_long_value_exact(); // 12345</code></pre></article>
+      <article class="function-doc" id="api-decimal-compare" data-search-name="compare_to compare_magnitude compare 比较"><h3>compare_to() / compare_magnitude()</h3><p data-lang="zh-CN"><code>compare_to</code> 比较实际数值；<code>compare_magnitude</code> 忽略正负号。返回负数、0、正数分别表示小于、等于、大于。</p><p data-lang="en"><code>compare_to</code> compares numeric values; <code>compare_magnitude</code> ignores signs. Negative, zero, and positive results mean less than, equal, and greater than.</p><pre><code>std::int32_t compare_to(const decimal&amp; value) const;
+std::int32_t compare_magnitude(const decimal&amp; value) const;</code></pre><pre><code class="language-cpp">decimal("2.0").compare_to(decimal("2.00"));        // 0
+decimal("-9").compare_magnitude(decimal("3"));     // positive</code></pre></article>
+      <article class="function-doc" id="api-decimal-equals" data-search-name="equals equality 表示相等"><h3>equals()</h3><p data-lang="zh-CN">只有数值和 scale 都相同才返回 true。用于比较业务数值时通常应使用 <code>compare_to() == 0</code>。</p><p data-lang="en">Returns true only when both numeric value and scale match. For business-value comparison, usually use <code>compare_to() == 0</code>.</p><pre><code>bool equals(const decimal&amp; other) const;</code></pre><pre><code class="language-cpp">decimal("2.0").equals(decimal("2.00")); // false</code></pre></article>
+      <article class="function-doc" id="api-decimal-min-max" data-search-name="min max minimum maximum 最值"><h3>min() / max()</h3><p data-lang="zh-CN">返回两个值中的较小值或较大值。</p><p data-lang="en">Returns the smaller or larger of two values.</p><pre><code>decimal min(const decimal&amp; value) const;
+decimal max(const decimal&amp; value) const;</code></pre><pre><code class="language-cpp">decimal cap("100");
+decimal charged = decimal("125").min(cap); // 100</code></pre></article>
+      <article class="function-doc" id="api-decimal-hash-ulp" data-search-name="hash_code ulp hash unit last place"><h3>hash_code() / ulp()</h3><p data-lang="zh-CN"><code>hash_code()</code> 与表示相等语义一致；<code>ulp()</code> 返回当前 scale 下的一个末位单位。</p><p data-lang="en"><code>hash_code()</code> follows representational equality; <code>ulp()</code> returns one unit in the last place at the current scale.</p><pre><code>std::int32_t hash_code() const;
+decimal ulp() const;</code></pre><pre><code class="language-cpp">decimal("12.34").ulp(); // 0.01</code></pre></article>
+    </section>
+
+    <section id="conversion" class="api-group"><h2><span data-lang="zh-CN">数值转换</span><span data-lang="en">Numeric conversions</span></h2>
+      <article class="function-doc" id="api-decimal-big-integer" data-search-name="to_big_integer exact integer 大整数"><h3>to_big_integer()</h3><p data-lang="zh-CN">转换为任意精度整数。普通版本截掉小数；exact 版本遇到非零小数部分时抛异常。</p><p data-lang="en">Converts to an arbitrary-precision integer. The normal form truncates fractions; the exact form throws for a nonzero fractional part.</p><pre><code>bigint to_big_integer() const;
+bigint to_big_integer_exact() const;</code></pre><pre><code class="language-cpp">decimal("12.90").to_big_integer();       // 12
+decimal("12.00").to_big_integer_exact(); // 12</code></pre></article>
+      <article class="function-doc" id="api-decimal-int-long" data-search-name="to_int to_long integer conversion 整数转换"><h3>to_int() / to_long()</h3><p data-lang="zh-CN">截掉小数部分并转换为固定宽度整数；超范围时只保留低位。若不能接受静默截断或回绕，请使用 exact 版本。</p><p data-lang="en">Truncates the fraction and converts to a fixed-width integer; out-of-range values retain low bits. Use exact forms when silent truncation or wrapping is unacceptable.</p><pre><code>std::int32_t to_int() const;
+std::int64_t to_long() const;</code></pre><pre><code class="language-cpp">decimal("42.99").to_int();  // 42
+decimal("-8.75").to_long(); // -8</code></pre></article>
+      <article class="function-doc" id="api-decimal-exact-integer" data-search-name="to_int_exact to_long_exact short byte exact 精确转换"><h3>to_*_exact()</h3><p data-lang="zh-CN">精确转换为 8、16、32 或 64 位整数。存在非零小数或超出目标范围时抛异常。</p><p data-lang="en">Exactly converts to an 8-, 16-, 32-, or 64-bit integer. Throws for a nonzero fraction or target-range overflow.</p><pre><code>std::int8_t to_byte_exact() const;
+std::int16_t to_short_exact() const;
+std::int32_t to_int_exact() const;
+std::int64_t to_long_exact() const;</code></pre><pre><code class="language-cpp">std::int32_t count = decimal("42.00").to_int_exact(); // 42
+// decimal("42.5").to_int_exact() throws</code></pre></article>
+      <article class="function-doc" id="api-decimal-floating" data-search-name="to_float to_double floating 浮点转换"><h3>to_float() / to_double()</h3><p data-lang="zh-CN">转换为二进制浮点数，可能损失精度；过大时可能得到无穷值。不要用它作为金额计算的中间步骤。</p><p data-lang="en">Converts to binary floating point, possibly losing precision; huge values may become infinity. Avoid it as an intermediate step in money calculations.</p><pre><code>float to_float() const;
+double to_double() const;</code></pre><pre><code class="language-cpp">double chart_value = decimal("12.34").to_double();</code></pre></article>
+    </section>
+
+    <section id="formatting" class="api-group"><h2><span data-lang="zh-CN">字符串格式</span><span data-lang="en">String formatting</span></h2>
+      <article class="function-doc" id="api-decimal-to-string" data-search-name="to_string scientific string 科学计数"><h3>to_string()</h3><p data-lang="zh-CN">返回规范字符串，数值很大、很小或 scale 特殊时可能使用科学计数法。</p><p data-lang="en">Returns the canonical representation, using scientific notation for large, small, or specially scaled values when appropriate.</p><pre><code>std::string to_string() const;</code></pre><pre><code class="language-cpp">decimal("0.000000123").to_string(); // 1.23E-7</code></pre></article>
+      <article class="function-doc" id="api-decimal-engineering" data-search-name="to_engineering_string engineering 工程计数"><h3>to_engineering_string()</h3><p data-lang="zh-CN">返回工程计数法字符串，指数始终是 3 的倍数，便于对应 SI 单位前缀。</p><p data-lang="en">Returns engineering notation whose exponent is a multiple of three, convenient for SI prefixes.</p><pre><code>std::string to_engineering_string() const;</code></pre><pre><code class="language-cpp">decimal("0.000000123").to_engineering_string(); // 123E-9</code></pre></article>
+      <article class="function-doc" id="api-decimal-plain" data-search-name="to_plain_string plain format 普通字符串"><h3>to_plain_string()</h3><p data-lang="zh-CN">始终返回普通十进制字符串，不产生指数字段。金额、JSON 文本和 UI 输出通常优先使用它。</p><p data-lang="en">Always returns a plain decimal string without an exponent. It is usually preferred for money, JSON text, and UI output.</p><pre><code>std::string to_plain_string() const;</code></pre><pre><code class="language-cpp">decimal("1.23E+4").to_plain_string(); // 12300</code></pre></article>
+    </section>
+
+    <section id="examples"><h2><span data-lang="zh-CN">完整示例</span><span data-lang="en">Complete examples</span></h2><p data-lang="zh-CN">本节中的每段代码都解决一个明确问题，是独立、完整的 C++17 程序，并参与文档回归编译。代码下方的输出来自程序实际运行结果。</p><p data-lang="en">Each listing solves one focused problem, is a standalone C++17 program, and is compiled in documentation regression checks. Output blocks show the program's actual result.</p><div class="callout"><span data-lang="zh-CN">当前库没有定义 <code>operator&lt;&lt;(std::ostream&amp;, const decimal&amp;)</code>。输出 decimal 时请显式调用 <code>to_plain_string()</code>、<code>to_string()</code> 或 <code>to_engineering_string()</code>。</span><span data-lang="en">The library does not currently define <code>operator&lt;&lt;(std::ostream&amp;, const decimal&amp;)</code>. Explicitly call <code>to_plain_string()</code>, <code>to_string()</code>, or <code>to_engineering_string()</code> when streaming a decimal.</span></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">构造与工厂函数</span><span data-lang="en">Constructors and factories</span></h3><p data-lang="zh-CN">展示字符串、整数、context 和未缩放值构造。</p><p data-lang="en">String, integer, context, and unscaled-value construction.</p></div><pre><code class="language-cpp" data-example="construction">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal text("123.4500");
+  const decimal integer(std::int64_t{42});
+  const math_context context(3, round_mode::HALF_UP);
+  const decimal rounded("1.2345", context);
+  const decimal unscaled = decimal::value_of(12345, 2);
+
+  std::cout &lt;&lt; text.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; integer.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; rounded.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; unscaled.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">123.4500 42 1.23 123.45</code></pre><ul class="code-explanation"><li data-lang="zh-CN">字符串构造保留输入 scale，所以 <code>123.4500</code> 的四个小数位不会自动消失。</li><li data-lang="en">String construction preserves input scale, so the four fractional digits in <code>123.4500</code> remain.</li><li data-lang="zh-CN"><code>math_context(3, HALF_UP)</code> 将 <code>1.2345</code> 限制为三位有效数字，结果为 <code>1.23</code>。</li><li data-lang="en"><code>math_context(3, HALF_UP)</code> limits <code>1.2345</code> to three significant digits, producing <code>1.23</code>.</li><li data-lang="zh-CN"><code>value_of(12345, 2)</code> 表示 <code>12345 × 10^-2</code>，即 <code>123.45</code>。</li><li data-lang="en"><code>value_of(12345, 2)</code> means <code>12345 × 10^-2</code>, or <code>123.45</code>.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">加减乘</span><span data-lang="en">Add, subtract, multiply</span></h3><p data-lang="zh-CN">精确运算和 context 运算可以按业务边界组合。</p><p data-lang="en">Exact and context-limited operations can be combined at business boundaries.</p></div><pre><code class="language-cpp" data-example="arithmetic">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal left("12.30");
+  const decimal right("0.45");
+  const math_context context(5, round_mode::HALF_EVEN);
+
+  const decimal sum = left.add(right);
+  const decimal difference = left.subtract(right);
+  const decimal product = left.multiply(right, context);
+
+  std::cout &lt;&lt; sum.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; difference.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; product.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">12.75
+11.85
+5.5350</code></pre><ul class="code-explanation"><li data-lang="zh-CN">加减法不带 context，结果精确，并采用两个输入中较大的 scale。</li><li data-lang="en">Addition and subtraction are exact here and use the larger input scale.</li><li data-lang="zh-CN">乘法显式传入五位有效数字的 context；精确乘积本身只有五位有效数字，因此没有发生舍入。</li><li data-lang="en">Multiplication explicitly uses a five-digit context. The exact product already has five significant digits, so no rounding occurs.</li><li data-lang="zh-CN">结果 <code>5.5350</code> 保留四位 scale，因为乘法结果的 scale 等于两个输入 scale 之和。</li><li data-lang="en"><code>5.5350</code> retains scale four because product scale is the sum of the two input scales.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">六类除法调用</span><span data-lang="en">Division choices</span></h3><p data-lang="zh-CN">展示精确商、固定 scale、有限精度、整数商、余数和成对返回。</p><p data-lang="en">Exact, fixed-scale, finite-precision, integral, remainder, and paired division.</p></div><pre><code class="language-cpp" data-example="division-forms">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal one("1");
+  const decimal three("3");
+  const decimal exact = one.divide(decimal("4"));
+  const decimal fixed_scale = decimal("10").divide(
+      three, 2, round_mode::HALF_UP);
+  const decimal finite_precision = one.divide(three, math_context(6));
+
+  const decimal dividend("17");
+  const decimal divisor("5");
+  const decimal integer_quotient = dividend.divide_to_integral_value(divisor);
+  const decimal remainder = dividend.remainder(divisor);
+  const auto [quotient, paired_remainder] =
+      dividend.divide_and_remainder(divisor);
+
+  std::cout &lt;&lt; exact.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; fixed_scale.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; finite_precision.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; integer_quotient.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; remainder.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; quotient.to_plain_string() &lt;&lt; ' '
+            &lt;&lt; paired_remainder.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">0.25
+3.33
+0.333333
+3
+2
+3 2</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>1 / 4</code> 可以有限且精确地表示，因此使用无舍入参数的 <code>divide()</code>。</li><li data-lang="en"><code>1 / 4</code> terminates exactly, so the argument-free exact <code>divide()</code> is appropriate.</li><li data-lang="zh-CN"><code>10 / 3</code> 用于金额时明确指定两位 scale 和 <code>HALF_UP</code>；用于一般计算时则用六位有效数字的 context。</li><li data-lang="en">For money, <code>10 / 3</code> explicitly uses scale two and <code>HALF_UP</code>; general calculation instead uses a six-digit context.</li><li data-lang="zh-CN">需要整数商和余数时，优先使用 <code>divide_and_remainder()</code> 一次返回两者。</li><li data-lang="en">When both integer quotient and remainder are needed, prefer one <code>divide_and_remainder()</code> call.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">Scale 与舍入</span><span data-lang="en">Scale and rounding</span></h3><p data-lang="zh-CN">调整小数位、移动小数点并移除尾随零。</p><p data-lang="en">Set fractional digits, move the point, and remove trailing zeros.</p></div><pre><code class="language-cpp" data-example="scale-rounding">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal value("123.4500");
+  std::cout &lt;&lt; value.set_scale(2, round_mode::HALF_UP).to_plain_string()
+            &lt;&lt; '\n';
+  std::cout &lt;&lt; value.move_point_left(2).to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.scale_by_power_of_ten(3).to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.strip_trailing_zeros().to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">123.45
+1.234500
+123450.0
+123.45</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>set_scale(2, HALF_UP)</code> 把 scale 从 4 降到 2。被移除的数字是 <code>00</code>，所以数值不变，表示变为 <code>123.45</code>。</li><li data-lang="en"><code>set_scale(2, HALF_UP)</code> reduces scale from four to two. The discarded digits are <code>00</code>, so the value remains unchanged and prints as <code>123.45</code>.</li><li data-lang="zh-CN"><code>move_point_left(2)</code> 相当于除以 100，但保留原表示信息，scale 从 4 增加到 6，因此输出 <code>1.234500</code>。</li><li data-lang="en"><code>move_point_left(2)</code> is equivalent to division by 100 while retaining representation information; scale grows from four to six, producing <code>1.234500</code>.</li><li data-lang="zh-CN"><code>scale_by_power_of_ten(3)</code> 相当于乘以 1000，scale 从 4 变为 1，所以输出仍带一位小数：<code>123450.0</code>。</li><li data-lang="en"><code>scale_by_power_of_ten(3)</code> is equivalent to multiplication by 1000; scale changes from four to one, so the result remains <code>123450.0</code>.</li><li data-lang="zh-CN"><code>strip_trailing_zeros()</code> 只删除十进制表示末尾不影响数值的零。它返回新对象，不会修改原始 <code>value</code>。</li><li data-lang="en"><code>strip_trailing_zeros()</code> removes only decimal trailing zeros that do not affect the value. It returns a new object and leaves <code>value</code> unchanged.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">比较与表示相等</span><span data-lang="en">Comparison and representation equality</span></h3><p data-lang="zh-CN">区分数值比较与包含 scale 的表示比较。</p><p data-lang="en">Distinguish numeric comparison from scale-sensitive representation equality.</p></div><pre><code class="language-cpp" data-example="comparison">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal first("2.0");
+  const decimal second("2.00");
+  const decimal negative("-9");
+  const decimal positive("3");
+
+  std::cout &lt;&lt; first.compare_to(second) &lt;&lt; '\n';
+  std::cout &lt;&lt; std::boolalpha &lt;&lt; first.equals(second) &lt;&lt; '\n';
+  std::cout &lt;&lt; negative.compare_magnitude(positive) &lt;&lt; '\n';
+  std::cout &lt;&lt; decimal("4").min(decimal("7")).to_plain_string()
+            &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">0
+false
+1
+4</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>compare_to()</code> 只比较数学值，因此 <code>2.0</code> 与 <code>2.00</code> 的结果是 0，表示两者数值相等。</li><li data-lang="en"><code>compare_to()</code> compares mathematical values only, so <code>2.0</code> and <code>2.00</code> produce zero.</li><li data-lang="zh-CN"><code>equals()</code> 同时比较数值和 scale。两者的 scale 分别为 1 和 2，因此返回 <code>false</code>。</li><li data-lang="en"><code>equals()</code> compares both value and scale. Their scales are one and two, so it returns <code>false</code>.</li><li data-lang="zh-CN"><code>compare_magnitude()</code> 忽略正负号；因为 <code>|-9| &gt; |3|</code>，所以返回正数 1。</li><li data-lang="en"><code>compare_magnitude()</code> ignores signs. Because <code>|-9| &gt; |3|</code>, it returns the positive result one.</li><li data-lang="zh-CN"><code>min()</code> 返回较小的 <code>decimal</code> 值。业务数值相等判断通常使用 <code>compare_to() == 0</code>，只有 scale 也属于身份时才使用 <code>equals()</code>。</li><li data-lang="en"><code>min()</code> returns the smaller value. Use <code>compare_to() == 0</code> for normal numeric equality and reserve <code>equals()</code> for scale-sensitive identity.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">幂、平方根与符号</span><span data-lang="en">Power, root, and signs</span></h3><p data-lang="zh-CN">context 为负指数和非完全平方根提供有限精度。</p><p data-lang="en">A context supplies finite precision for negative powers and irrational roots.</p></div><pre><code class="language-cpp" data-example="power-root">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal base("2");
+  const math_context reciprocal_context(8, round_mode::HALF_UP);
+  const math_context root_context(16, round_mode::HALF_EVEN);
+
+  const decimal absolute = decimal("-12.30").abs();
+  const decimal compound_factor = decimal("1.05").pow(2);
+  const decimal reciprocal_power = base.pow(-3, reciprocal_context);
+  const decimal square_root = base.sqrt(root_context);
+
+  std::cout &lt;&lt; absolute.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; compound_factor.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; reciprocal_power.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; square_root.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">12.30
+1.1025
+0.125
+1.414213562373095</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>abs()</code> 只移除负号，保留原 scale，因此 <code>-12.30</code> 变为 <code>12.30</code>，末尾的零仍然存在。</li><li data-lang="en"><code>abs()</code> removes only the sign and preserves scale, so <code>-12.30</code> becomes <code>12.30</code> with its trailing zero intact.</li><li data-lang="zh-CN"><code>1.05^2</code> 可以精确表示，<code>pow(2)</code> 得到 <code>1.1025</code>，不需要 context。</li><li data-lang="en"><code>1.05^2</code> is exactly representable, so <code>pow(2)</code> produces <code>1.1025</code> without a context.</li><li data-lang="zh-CN">负指数意味着先计算幂再取倒数。<code>2^-3 = 1/8 = 0.125</code>；API 要求传入 context，以便不能有限表示时有明确的精度和舍入规则。</li><li data-lang="en">A negative exponent requires a reciprocal. <code>2^-3 = 1/8 = 0.125</code>; the API requires a context so nonterminating results have explicit precision and rounding.</li><li data-lang="zh-CN"><code>sqrt(2)</code> 是无限不循环小数，示例使用 16 位有效数字和 <code>HALF_EVEN</code>，得到 <code>1.414213562373095</code>。</li><li data-lang="en"><code>sqrt(2)</code> is irrational. Sixteen significant digits with <code>HALF_EVEN</code> produce <code>1.414213562373095</code>.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">内部表示检查</span><span data-lang="en">Representation inspection</span></h3><p data-lang="zh-CN">读取 scale、precision、未缩放值和末位单位。</p><p data-lang="en">Read scale, precision, unscaled value, and unit in the last place.</p></div><pre><code class="language-cpp" data-example="inspection">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal value("123.4500");
+
+  std::cout &lt;&lt; value.scale() &lt;&lt; ' ' &lt;&lt; value.precision() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.unscaled_long_value_exact() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.ulp().to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.signum() &lt;&lt; ' ' &lt;&lt; std::boolalpha
+            &lt;&lt; value.is_zero() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">4 7
+1234500
+0.0001
+1 false</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>scale()</code> 返回小数点右侧的位数。输入保留四位小数，因此第一项是 4。</li><li data-lang="en"><code>scale()</code> returns the number of digits to the right of the decimal point. The input retains four fractional digits.</li><li data-lang="zh-CN"><code>precision()</code> 统计未缩放整数的有效十进制位数；<code>1234500</code> 有七位，所以 precision 为 7。</li><li data-lang="en"><code>precision()</code> counts decimal digits in the unscaled integer. <code>1234500</code> has seven digits.</li><li data-lang="zh-CN">内部关系是 <code>1234500 × 10^-4 = 123.4500</code>，因此 <code>unscaled_long_value_exact()</code> 返回 1234500。</li><li data-lang="en">The internal relationship is <code>1234500 × 10^-4 = 123.4500</code>, so <code>unscaled_long_value_exact()</code> returns 1234500.</li><li data-lang="zh-CN"><code>ulp()</code> 是当前 scale 下末位所代表的单位，即 <code>10^-4 = 0.0001</code>。正数的 <code>signum()</code> 为 1，且该值不为零。</li><li data-lang="en"><code>ulp()</code> is the unit represented by the final place, or <code>10^-4 = 0.0001</code>. A positive value has signum one and is not zero.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">三种字符串格式</span><span data-lang="en">Three string formats</span></h3><p data-lang="zh-CN">按协议或 UI 需求选择科学、工程或普通十进制形式。</p><p data-lang="en">Choose scientific, engineering, or plain decimal form for protocols and UI.</p></div><pre><code class="language-cpp" data-example="formatting">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal value("0.000000123");
+
+  std::cout &lt;&lt; value.to_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.to_engineering_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; value.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">1.23E-7
+123E-9
+0.000000123</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>to_string()</code> 返回库的规范表示。这个数足够小，因此使用科学计数法 <code>1.23E-7</code>。</li><li data-lang="en"><code>to_string()</code> returns the library's canonical form. This small value is represented as <code>1.23E-7</code>.</li><li data-lang="zh-CN"><code>to_engineering_string()</code> 要求指数是 3 的倍数，所以把系数改写为 123，得到 <code>123E-9</code>；数学值没有改变。</li><li data-lang="en"><code>to_engineering_string()</code> requires an exponent divisible by three, so it rewrites the coefficient as 123 and returns <code>123E-9</code> without changing the value.</li><li data-lang="zh-CN"><code>to_plain_string()</code> 展开指数并输出 <code>0.000000123</code>，更适合金额、JSON 字段和面向用户的文本。</li><li data-lang="en"><code>to_plain_string()</code> expands the exponent to <code>0.000000123</code>, which is generally preferable for money, JSON fields, and user-facing text.</li><li data-lang="zh-CN">三个函数只改变字符串表示，不改变 <code>value</code> 本身，也不会执行数值舍入。</li><li data-lang="en">All three functions change only textual representation; they neither mutate <code>value</code> nor perform numeric rounding.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">解析文本中的金额字段</span><span data-lang="en">Parse an amount field from text</span></h3><p data-lang="zh-CN">直接解析字符缓冲区中的一个片段，不需要先创建临时字符串。</p><p data-lang="en">Parse a slice of a character buffer without first creating a temporary string.</p></div><pre><code class="language-cpp" data-example="text-slice">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const char record[] = "USD,123.4500,paid";
+  const decimal amount(record, 4, 8);
+
+  std::cout &lt;&lt; amount.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; amount.scale() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">123.4500
+4</code></pre><ul class="code-explanation"><li data-lang="zh-CN">原始记录是 <code>USD,123.4500,paid</code>。金额字段的首字符 <code>1</code> 位于下标 4，字段共 8 个字符。</li><li data-lang="en">The record is <code>USD,123.4500,paid</code>. The amount starts at index four and occupies eight characters.</li><li data-lang="zh-CN">构造函数只解析 <code>[offset, offset + length)</code> 范围，因此货币代码和状态字段不会参与数值解析，也不需要创建临时子字符串。</li><li data-lang="en">The constructor parses only <code>[offset, offset + length)</code>, excluding the currency and status fields without allocating a temporary substring.</li><li data-lang="zh-CN">解析结果保留输入中的四位 scale，所以输出仍为 <code>123.4500</code>，第二行的 <code>scale()</code> 结果为 4。</li><li data-lang="en">The result preserves the four input fractional digits, so it prints <code>123.4500</code> and reports scale four.</li><li data-lang="zh-CN">如果 offset、length 越界或字段包含非法字符，构造会抛异常；处理外部文件时应在记录边界捕获并报告输入位置。</li><li data-lang="en">An invalid range or malformed field throws. File-processing code should catch the error at the record boundary and report the source position.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">计算一组数值的平均值</span><span data-lang="en">Average a collection of values</span></h3><p data-lang="zh-CN">展示不可变 <code>decimal</code> 在标准容器和循环中的累加方式。</p><p data-lang="en">Use immutable <code>decimal</code> values with a standard container and an accumulation loop.</p></div><pre><code class="language-cpp" data-example="average">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;cstdint&gt;
+#include &lt;iostream&gt;
+#include &lt;vector&gt;
+
+int main() {
+  const std::vector&lt;decimal&gt; readings = {
+      decimal("12.50"),
+      decimal("7.25"),
+      decimal("20.00"),
+  };
+
+  decimal sum = decimal::ZERO;
+  for (const decimal&amp; reading : readings) {
+    sum = sum.add(reading);
+  }
+
+  const decimal count(static_cast&lt;std::int64_t&gt;(readings.size()));
+  const decimal average = sum.divide(count);
+  std::cout &lt;&lt; average.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">13.25</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>sum</code> 从不可变常量 <code>decimal::ZERO</code> 开始。三个输入依次相加后得到精确总和 <code>39.75</code>。</li><li data-lang="en"><code>sum</code> starts from the immutable <code>decimal::ZERO</code> constant. Adding the three inputs produces the exact total <code>39.75</code>.</li><li data-lang="zh-CN"><code>decimal</code> 不会原地修改，因此循环必须把 <code>add()</code> 返回的新值重新赋给 <code>sum</code>。</li><li data-lang="en"><code>decimal</code> does not mutate in place, so each value returned by <code>add()</code> is assigned back to <code>sum</code>.</li><li data-lang="zh-CN">容器大小先显式转换为 <code>std::int64_t</code>，再构造十进制除数，避免从无符号 <code>size_type</code> 隐式窄化。</li><li data-lang="en">The container size is explicitly converted to <code>std::int64_t</code> before constructing the decimal divisor, avoiding an implicit narrowing conversion from unsigned <code>size_type</code>.</li><li data-lang="zh-CN"><code>39.75 / 3 = 13.25</code> 可以有限且精确地表示，因此使用精确 <code>divide()</code>。真实程序还应在除法前拒绝空容器。</li><li data-lang="en"><code>39.75 / 3 = 13.25</code> terminates exactly, so exact <code>divide()</code> is appropriate. Production code must also reject an empty collection before division.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">平均分配金额并处理尾差</span><span data-lang="en">Allocate money and handle the remainder</span></h3><p data-lang="zh-CN">固定到分后向下取整，再把无法平均分配的一分钱交给第一份。</p><p data-lang="en">Round each equal share down to cents, then assign the leftover cent to the first share.</p></div><pre><code class="language-cpp" data-example="money-allocation">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal total("100.00");
+  const decimal recipient_count(3);
+  const decimal equal_share =
+      total.divide(recipient_count, 2, round_mode::DOWN);
+  const decimal distributed = equal_share.multiply(recipient_count);
+  const decimal remainder = total.subtract(distributed);
+  const decimal first_share = equal_share.add(remainder);
+
+  std::cout &lt;&lt; first_share.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; equal_share.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; equal_share.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; remainder.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">33.34
+33.33
+33.33
+0.01</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>100.00 / 3</code> 是无限循环小数，精确 <code>divide()</code> 会抛异常。这里明确要求 scale 2，因为最小货币单位是分。</li><li data-lang="en"><code>100.00 / 3</code> repeats forever, so exact <code>divide()</code> would throw. Scale two is explicit because cents are the smallest currency unit.</li><li data-lang="zh-CN">使用 <code>DOWN</code> 得到基础份额 <code>33.33</code>。不能使用可能向上舍入的策略，否则三份基础金额可能超过总额。</li><li data-lang="en"><code>DOWN</code> produces the base share <code>33.33</code>. A mode that can round upward could make the base shares exceed the available total.</li><li data-lang="zh-CN"><code>33.33 × 3 = 99.99</code>，再用原总额减去已分配金额，精确计算出尾差 <code>0.01</code>。</li><li data-lang="en"><code>33.33 × 3 = 99.99</code>; subtracting the distributed amount from the original total yields the exact remainder <code>0.01</code>.</li><li data-lang="zh-CN">第一份加入尾差后为 <code>33.34</code>，另外两份各为 <code>33.33</code>。前三行相加严格等于 <code>100.00</code>，最后一行单独展示已处理的尾差。</li><li data-lang="en">The first share becomes <code>33.34</code> and the other two remain <code>33.33</code>. The first three lines total exactly <code>100.00</code>; the final line reports the allocated remainder.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">计算复利</span><span data-lang="en">Calculate compound interest</span></h3><p data-lang="zh-CN">在计算阶段保持精确，只对最终余额和收益应用金额舍入。</p><p data-lang="en">Keep the calculation exact and apply money rounding only to the final balance and gain.</p></div><pre><code class="language-cpp" data-example="compound-interest">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal principal("10000.00");
+  const decimal annual_rate("0.0525");
+  const decimal growth_factor = decimal::ONE.add(annual_rate);
+  const decimal exact_balance = principal.multiply(growth_factor.pow(2));
+  const decimal balance =
+      exact_balance.set_scale(2, round_mode::HALF_EVEN);
+  const decimal interest = balance.subtract(principal);
+
+  std::cout &lt;&lt; balance.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; interest.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">11077.56
+1077.56</code></pre><ul class="code-explanation"><li data-lang="zh-CN">年利率 <code>0.0525</code> 表示 5.25%，因此单年增长因子是 <code>1 + 0.0525 = 1.0525</code>。</li><li data-lang="en">The annual rate <code>0.0525</code> means 5.25%, making the one-year growth factor <code>1 + 0.0525 = 1.0525</code>.</li><li data-lang="zh-CN">两年余额公式为 <code>10000.00 × 1.0525^2</code>。非负整数指数和乘法都使用精确重载，得到 <code>11077.56250000</code>。</li><li data-lang="en">The two-year formula is <code>10000.00 × 1.0525^2</code>. The nonnegative power and multiplication use exact overloads and produce <code>11077.56250000</code>.</li><li data-lang="zh-CN">最终余额使用 scale 2 和 <code>HALF_EVEN</code> 舍入为 <code>11077.56</code>；中间过程没有提前损失精度。</li><li data-lang="en">The final balance is rounded to scale two with <code>HALF_EVEN</code>, producing <code>11077.56</code> without earlier loss of precision.</li><li data-lang="zh-CN">收益使用已经落账的余额减去本金：<code>11077.56 - 10000.00 = 1077.56</code>，因此两者采用一致的金额精度。</li><li data-lang="en">Interest subtracts principal from the posted balance: <code>11077.56 - 10000.00 = 1077.56</code>, keeping both values at consistent money precision.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">金额与税额</span><span data-lang="en">Money and tax</span></h3><p data-lang="zh-CN">计算过程中保留足够精度，只在最终业务边界设置两位小数。</p><p data-lang="en">Keep sufficient precision during calculation and set two decimal places only at the final business boundary.</p></div><pre><code class="language-cpp" data-example="money-tax">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal unit_price("19.99");
+  const decimal quantity(3);
+  const decimal tax_rate("0.13");
+
+  const decimal subtotal = unit_price.multiply(quantity);
+  const decimal tax = subtotal.multiply(tax_rate);
+  const decimal total =
+      subtotal.add(tax).set_scale(2, round_mode::HALF_UP);
+  std::cout &lt;&lt; total.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">67.77</code></pre><ul class="code-explanation"><li data-lang="zh-CN">小计为 <code>19.99 × 3 = 59.97</code>，这一步使用精确乘法，不发生舍入。</li><li data-lang="en">The subtotal is <code>19.99 × 3 = 59.97</code>. Exact multiplication performs no rounding.</li><li data-lang="zh-CN">税额为 <code>59.97 × 0.13 = 7.7961</code>，仍保留完整结果，而不是提前变成 <code>7.80</code>。</li><li data-lang="en">Tax is <code>59.97 × 0.13 = 7.7961</code>. The full result is retained instead of being rounded early to <code>7.80</code>.</li><li data-lang="zh-CN">精确合计是 <code>67.7661</code>，最终调用 <code>set_scale(2, HALF_UP)</code> 得到应付金额 <code>67.77</code>。</li><li data-lang="en">The exact total is <code>67.7661</code>; the final <code>set_scale(2, HALF_UP)</code> produces the payable amount <code>67.77</code>.</li><li data-lang="zh-CN">金额计算通常只在明确的业务边界舍入。若小计、税额和总计分别舍入，多个项目累加时可能产生不同结果。</li><li data-lang="en">Money calculations should normally round at an explicit business boundary. Rounding subtotal, tax, and total independently can accumulate discrepancies.</li></ul></div><div class="two-col"><div><h3><span data-lang="zh-CN">安全接收整数</span><span data-lang="en">Safely accept an integer</span></h3><p data-lang="zh-CN">使用 exact 转换阻止意外小数和范围溢出。</p><p data-lang="en">Use an exact conversion to reject accidental fractions and overflow.</p></div><pre><code class="language-cpp" data-example="exact-conversion">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+#include &lt;stdexcept&gt;
+
+int main() {
+  const decimal whole_number("42.00");
+  const decimal fractional_number("42.5");
+
+  std::cout &lt;&lt; whole_number.to_int_exact() &lt;&lt; '\n';
+
+  try {
+    static_cast&lt;void&gt;(fractional_number.to_int_exact());
+  } catch (const std::runtime_error&amp;) {
+    std::cout &lt;&lt; "rejected" &lt;&lt; '\n';
+  }
+}</code></pre><pre class="output"><code class="language-text">42
+rejected</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>42.00</code> 的小数部分全为零，因此 <code>to_int_exact()</code> 返回 <code>42</code>；原有 scale 为 2 并不妨碍精确转换。</li><li data-lang="en"><code>42.00</code> has only zeros after the decimal point, so <code>to_int_exact()</code> returns <code>42</code>; its scale of two does not prevent exact conversion.</li><li data-lang="zh-CN"><code>42.5</code> 含有非零小数部分。普通 <code>to_int()</code> 会截断为 42，而 <code>to_int_exact()</code> 为避免静默丢失数据会抛出 <code>std::runtime_error</code>。</li><li data-lang="en"><code>42.5</code> has a nonzero fractional part. Ordinary <code>to_int()</code> truncates to 42, while <code>to_int_exact()</code> throws <code>std::runtime_error</code> instead of silently losing data.</li><li data-lang="zh-CN"><code>static_cast&lt;void&gt;</code> 表明这里刻意忽略返回值，只演示失败分支；catch 捕获的是当前实现实际抛出的异常类型。</li><li data-lang="en"><code>static_cast&lt;void&gt;</code> explicitly discards the return value because only the failure path is being demonstrated; the catch matches the implementation's actual exception type.</li><li data-lang="zh-CN">exact 转换还会检查目标整数范围。即使没有小数部分，超过 <code>std::int32_t</code> 范围的值也会被拒绝。</li><li data-lang="en">Exact conversion also checks the target range. A value outside <code>std::int32_t</code> is rejected even when it has no fractional part.</li></ul></div></section>
+
+    <section id="scenario-examples"><h2><span data-lang="zh-CN">进阶业务示例</span><span data-lang="en">Practical examples</span></h2><p data-lang="zh-CN">这些示例借鉴成熟开源 decimal 文档的场景分类，但只使用本库当前提供的构造、计算、转换和格式化函数。每个输出块都由校验器实际运行得到。</p><p data-lang="en">These examples follow the scenario-oriented structure of mature open-source decimal documentation while using only this library's current APIs. Every output block is produced by the verifier.</p>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">字符串、double 与 value_of()</span><span data-lang="en">String, double, and value_of()</span></h3><p data-lang="zh-CN">对比三种看似相同的 <code>0.1</code> 输入，理解二进制浮点转换的差异。</p><p data-lang="en">Compare three apparently identical <code>0.1</code> inputs to understand binary floating-point conversion.</p></div><pre><code class="language-cpp" data-example="floating-input">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal from_text("0.1");
+  const decimal from_binary_double(0.1);
+  const decimal from_factory = decimal::value_of(0.1);
+
+  std::cout &lt;&lt; from_text.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; from_binary_double.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; from_factory.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">0.1
+0.1000000000000000055511151231257827021181583404541015625
+0.1</code></pre><ul class="code-explanation"><li data-lang="zh-CN">字符串构造直接解析十进制文本，所以第一行精确表示数学意义上的 <code>0.1</code>。</li><li data-lang="en">String construction parses decimal text directly, so the first line represents mathematical <code>0.1</code> exactly.</li><li data-lang="zh-CN">字面量 <code>0.1</code> 先成为二进制 <code>double</code>；直接 double 构造保留该二进制值的精确十进制展开，因此第二行很长。</li><li data-lang="en">The literal <code>0.1</code> first becomes a binary <code>double</code>. Direct double construction preserves its exact decimal expansion, producing the long second line.</li><li data-lang="zh-CN"><code>value_of(0.1)</code> 使用 double 的规范文本形式，因此第三行更符合日常显示预期，但原始 double 已经经历二进制表示。</li><li data-lang="en"><code>value_of(0.1)</code> uses the double's canonical text, so the third line matches normal display expectations, though the source value was still binary.</li><li data-lang="zh-CN">金额、税率和协议字段应优先使用字符串；只有输入本来就是 double 时才选择后两种方式。</li><li data-lang="en">Prefer strings for money, rates, and protocol fields. Use the double forms only when the source data is already binary floating point.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">折扣与最终应付金额</span><span data-lang="en">Discount and final payable amount</span></h3><p data-lang="zh-CN">保留精确折扣，在最终支付边界统一舍入。</p><p data-lang="en">Preserve the exact discount and round once at the payment boundary.</p></div><pre><code class="language-cpp" data-example="discount">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal list_price("249.90");
+  const decimal discount_rate("0.15");
+  const decimal exact_discount = list_price.multiply(discount_rate);
+  const decimal payable = list_price.subtract(exact_discount).set_scale(
+      2, round_mode::HALF_UP);
+
+  std::cout &lt;&lt; exact_discount.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; payable.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">37.4850
+212.42</code></pre><ul class="code-explanation"><li data-lang="zh-CN">折扣率 <code>0.15</code> 表示 15%，精确折扣是 <code>249.90 × 0.15 = 37.4850</code>。</li><li data-lang="en">The rate <code>0.15</code> means 15%, producing the exact discount <code>249.90 × 0.15 = 37.4850</code>.</li><li data-lang="zh-CN">精确应付金额是 <code>249.90 - 37.4850 = 212.4150</code>；支付只接受分，因此最终设置 scale 2。</li><li data-lang="en">The exact payable amount is <code>249.90 - 37.4850 = 212.4150</code>. Payment accepts cents, so scale two is applied at the end.</li><li data-lang="zh-CN"><code>HALF_UP</code> 将第三位小数 5 向上舍入，最终得到 <code>212.42</code>。折扣中间值没有提前舍入。</li><li data-lang="en"><code>HALF_UP</code> rounds the third fractional digit five upward, yielding <code>212.42</code> without prematurely rounding the discount.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">汇率换算</span><span data-lang="en">Currency conversion</span></h3><p data-lang="zh-CN">先按完整汇率计算，再根据目标货币的最小单位舍入。</p><p data-lang="en">Calculate with the full exchange rate, then round for the target currency.</p></div><pre><code class="language-cpp" data-example="currency-conversion">#include &lt;decimal/decimal.h&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal source_amount("125.50");
+  const decimal exchange_rate("7.2386");
+  const decimal exact_target = source_amount.multiply(exchange_rate);
+  const decimal posted_target =
+      exact_target.set_scale(2, round_mode::HALF_UP);
+
+  std::cout &lt;&lt; exact_target.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; posted_target.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">908.444300
+908.44</code></pre><ul class="code-explanation"><li data-lang="zh-CN">源金额 scale 为 2，汇率 scale 为 4；精确乘积的 scale 是两者之和 6，所以第一行保留为 <code>908.444300</code>。</li><li data-lang="en">The source has scale two and the rate scale four. Exact multiplication adds them, so the first line retains scale six as <code>908.444300</code>.</li><li data-lang="zh-CN">落账金额要求两位小数。第三位小数是 4，使用 <code>HALF_UP</code> 后得到 <code>908.44</code>。</li><li data-lang="en">The posted amount requires two fractional digits. The third digit is four, so <code>HALF_UP</code> produces <code>908.44</code>.</li><li data-lang="zh-CN">汇率通常比金额保留更多小数位，不应先把汇率压缩到两位，否则会在大额或批量换算中放大误差。</li><li data-lang="en">Exchange rates normally retain more digits than money. Do not reduce the rate to two digits first, because the error grows for large or repeated conversions.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">解析 CSV 订单并汇总</span><span data-lang="en">Parse and total CSV orders</span></h3><p data-lang="zh-CN">从多条文本记录中提取数量和单价，计算订单总额。</p><p data-lang="en">Extract quantity and unit price from text records and calculate an order total.</p></div><pre><code class="language-cpp" data-example="csv-orders">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;array&gt;
+#include &lt;iostream&gt;
+#include &lt;string_view&gt;
+
+int main() {
+  const std::array&lt;std::string_view, 2&gt; records = {
+      "Keyboard,2,199.90",
+      "Mouse,3,49.50",
+  };
+
+  decimal order_total = decimal::ZERO;
+  for (const std::string_view record : records) {
+    const std::size_t first_comma = record.find(',');
+    const std::size_t second_comma = record.find(',', first_comma + 1);
+    const decimal quantity(
+        record.substr(first_comma + 1, second_comma - first_comma - 1));
+    const decimal unit_price(record.substr(second_comma + 1));
+    order_total = order_total.add(unit_price.multiply(quantity));
+  }
+
+  std::cout &lt;&lt; order_total.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">548.30</code></pre><ul class="code-explanation"><li data-lang="zh-CN">第一条记录计算 <code>2 × 199.90 = 399.80</code>，第二条记录计算 <code>3 × 49.50 = 148.50</code>。</li><li data-lang="en">The first record produces <code>2 × 199.90 = 399.80</code>; the second produces <code>3 × 49.50 = 148.50</code>.</li><li data-lang="zh-CN"><code>std::string_view::substr()</code> 生成非拥有视图，<code>decimal</code> 在构造期间解析字段，不需要为数量和价格分别分配字符串。</li><li data-lang="en"><code>std::string_view::substr()</code> creates non-owning views. <code>decimal</code> parses them during construction without allocating separate quantity and price strings.</li><li data-lang="zh-CN">两个小计精确相加得到 <code>548.30</code>。真实 CSV 解析还应检查逗号是否存在、列数是否正确，并在行级别报告非法数字。</li><li data-lang="en">The exact subtotals add to <code>548.30</code>. Production CSV parsing must also validate delimiters and column counts and report malformed numbers by row.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">计算等额月供</span><span data-lang="en">Calculate a fixed monthly payment</span></h3><p data-lang="zh-CN">使用有限精度 context 计算包含除法和幂的贷款公式。</p><p data-lang="en">Use a finite-precision context for a loan formula containing division and powers.</p></div><pre><code class="language-cpp" data-example="loan-payment">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;cstdint&gt;
+#include &lt;iostream&gt;
+
+int main() {
+  const decimal principal("10000.00");
+  const decimal annual_rate("0.06");
+  const std::int32_t month_count = 12;
+  const math_context context(24, round_mode::HALF_EVEN);
+
+  const decimal monthly_rate =
+      annual_rate.divide(decimal(12), context);
+  const decimal factor =
+      decimal::ONE.add(monthly_rate).pow(month_count, context);
+  const decimal numerator =
+      principal.multiply(monthly_rate, context).multiply(factor, context);
+  const decimal denominator = factor.subtract(decimal::ONE, context);
+  const decimal payment = numerator.divide(denominator, context).set_scale(
+      2, round_mode::HALF_EVEN);
+
+  std::cout &lt;&lt; payment.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">860.66</code></pre><ul class="code-explanation"><li data-lang="zh-CN">月利率为 <code>0.06 / 12 = 0.005</code>。贷款公式使用 <code>P × r × (1+r)^n / ((1+r)^n - 1)</code>。</li><li data-lang="en">The monthly rate is <code>0.06 / 12 = 0.005</code>. The payment formula is <code>P × r × (1+r)^n / ((1+r)^n - 1)</code>.</li><li data-lang="zh-CN">幂和除法可能产生很长的小数，因此中间计算统一使用 24 位有效数字和 <code>HALF_EVEN</code>，避免每个步骤自行选择不同精度。</li><li data-lang="en">Powers and division can produce long decimals, so every intermediate step uses 24 significant digits with <code>HALF_EVEN</code>.</li><li data-lang="zh-CN">公式结果在最后设置为两位 scale，得到月供 <code>860.66</code>。这只是数值示例，实际贷款还要遵循合同规定的计息日和舍入规则。</li><li data-lang="en">The final result is set to scale two, producing <code>860.66</code>. Real loans must additionally follow contractual day-count and rounding rules.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">处理非终止除法</span><span data-lang="en">Handle nonterminating division</span></h3><p data-lang="zh-CN">对比精确除法、固定小数位除法和有效数字 context。</p><p data-lang="en">Compare exact division, fixed-scale division, and significant-digit context.</p></div><pre><code class="language-cpp" data-example="nonterminating-division">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+#include &lt;stdexcept&gt;
+
+int main() {
+  const decimal one("1");
+  const decimal three("3");
+
+  try {
+    static_cast&lt;void&gt;(one.divide(three));
+  } catch (const std::runtime_error&amp;) {
+    std::cout &lt;&lt; "exact division rejected" &lt;&lt; '\n';
+  }
+
+  const decimal fixed_scale = one.divide(three, 2, round_mode::HALF_UP);
+  const decimal finite_precision = one.divide(
+      three, math_context(6, round_mode::HALF_EVEN));
+  std::cout &lt;&lt; fixed_scale.to_plain_string() &lt;&lt; '\n';
+  std::cout &lt;&lt; finite_precision.to_plain_string() &lt;&lt; '\n';
+}</code></pre><pre class="output"><code class="language-text">exact division rejected
+0.33
+0.333333</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>1 / 3</code> 没有有限十进制展开，因此不带舍入参数的精确重载无法返回结果并抛出异常。</li><li data-lang="en"><code>1 / 3</code> has no terminating decimal expansion, so the exact overload cannot return a result and throws.</li><li data-lang="zh-CN">固定 scale 重载回答“保留几位小数”，因此 scale 2 的结果为 <code>0.33</code>，适合金额等固定小数位场景。</li><li data-lang="en">The fixed-scale overload answers “how many fractional digits,” producing <code>0.33</code> at scale two for money-like use cases.</li><li data-lang="zh-CN"><code>math_context(6)</code> 回答“保留几位有效数字”，因此结果为六位有效数字 <code>0.333333</code>，适合一般数值计算。</li><li data-lang="en"><code>math_context(6)</code> answers “how many significant digits,” producing <code>0.333333</code> for general numerical work.</li></ul></div>
+      <div class="two-col"><div><h3><span data-lang="zh-CN">禁止隐式舍入</span><span data-lang="en">Forbid implicit rounding</span></h3><p data-lang="zh-CN">使用 <code>UNNECESSARY</code> 将“结果必须精确”变成运行时约束。</p><p data-lang="en">Use <code>UNNECESSARY</code> to enforce exactness at runtime.</p></div><pre><code class="language-cpp" data-example="unnecessary-rounding">#include &lt;decimal/decimal.h&gt;
+
+#include &lt;iostream&gt;
+#include &lt;stdexcept&gt;
+
+int main() {
+  const decimal exact("12.3400");
+  const decimal inexact("12.345");
+
+  std::cout &lt;&lt; exact.set_scale(
+      2, round_mode::UNNECESSARY).to_plain_string() &lt;&lt; '\n';
+
+  try {
+    static_cast&lt;void&gt;(inexact.set_scale(2, round_mode::UNNECESSARY));
+  } catch (const std::runtime_error&amp;) {
+    std::cout &lt;&lt; "rounding required" &lt;&lt; '\n';
+  }
+}</code></pre><pre class="output"><code class="language-text">12.34
+rounding required</code></pre><ul class="code-explanation"><li data-lang="zh-CN"><code>12.3400</code> 降到 scale 2 时只移除两个零，不改变数学值，所以 <code>UNNECESSARY</code> 允许操作并返回 <code>12.34</code>。</li><li data-lang="en">Reducing <code>12.3400</code> to scale two removes only zeros and preserves the value, so <code>UNNECESSARY</code> permits it and returns <code>12.34</code>.</li><li data-lang="zh-CN"><code>12.345</code> 降到 scale 2 必须丢弃非零数字 5。由于调用者明确禁止舍入，函数抛出 <code>std::runtime_error</code>。</li><li data-lang="en">Reducing <code>12.345</code> to scale two must discard a nonzero five. Because rounding is explicitly forbidden, the function throws <code>std::runtime_error</code>.</li><li data-lang="zh-CN">这种模式适合数据校验、账务对账和“不允许静默改变数值”的接口边界。</li><li data-lang="en">This mode is useful for validation, reconciliation, and API boundaries where silent value changes are forbidden.</li></ul></div>
+    </section>
+
+    <section id="advanced"><h2><span data-lang="zh-CN">高级类型</span><span data-lang="en">Advanced types</span></h2><p class="lead" data-lang="zh-CN">大多数应用只需要 <code>decimal</code>. 当你需要统一运算精度,明确舍入方向,或者直接执行任意精度整数运算时,再使用这些类型.</p><p class="lead" data-lang="en">Most applications only need <code>decimal</code>. Use these types when you need a reusable precision policy, an explicit rounding direction, or direct arbitrary-precision integer arithmetic.</p>
+      <article class="function-doc" id="advanced-round-mode" data-search-name="round_mode rounding modes 舍入模式"><h3>round_mode <span class="kind">enum</span></h3><p data-lang="zh-CN">指定丢弃非零数字时结果移动的方向. 模式对正负数保持一致的数学含义.</p><p data-lang="en">Specifies the direction in which a result moves when nonzero digits are discarded. Each mode keeps the same mathematical meaning for positive and negative values.</p><table><thead><tr><th>Mode</th><th><span data-lang="zh-CN">规则</span><span data-lang="en">Rule</span></th><th>1.5</th><th>-1.5</th></tr></thead><tbody><tr><td><code>UP</code></td><td><span data-lang="zh-CN">远离零</span><span data-lang="en">Away from zero</span></td><td>2</td><td>-2</td></tr><tr><td><code>DOWN</code></td><td><span data-lang="zh-CN">向零</span><span data-lang="en">Toward zero</span></td><td>1</td><td>-1</td></tr><tr><td><code>CEILING</code></td><td><span data-lang="zh-CN">向正无穷</span><span data-lang="en">Toward positive infinity</span></td><td>2</td><td>-1</td></tr><tr><td><code>FLOOR</code></td><td><span data-lang="zh-CN">向负无穷</span><span data-lang="en">Toward negative infinity</span></td><td>1</td><td>-2</td></tr><tr><td><code>HALF_UP</code></td><td><span data-lang="zh-CN">最近值,中点远离零</span><span data-lang="en">Nearest, ties away from zero</span></td><td>2</td><td>-2</td></tr><tr><td><code>HALF_DOWN</code></td><td><span data-lang="zh-CN">最近值,中点向零</span><span data-lang="en">Nearest, ties toward zero</span></td><td>1</td><td>-1</td></tr><tr><td><code>HALF_EVEN</code></td><td><span data-lang="zh-CN">最近值,中点选择偶数末位</span><span data-lang="en">Nearest, ties to an even last digit</span></td><td>2</td><td>-2</td></tr><tr><td><code>UNNECESSARY</code></td><td><span data-lang="zh-CN">禁止丢弃非零数字</span><span data-lang="en">Reject discarded nonzero digits</span></td><td><span data-lang="zh-CN">异常</span><span data-lang="en">throws</span></td><td><span data-lang="zh-CN">异常</span><span data-lang="en">throws</span></td></tr></tbody></table><div class="callout"><span data-lang="zh-CN">金额结算常见 <code>HALF_EVEN</code> 或 <code>HALF_UP</code>,但最终选择必须服从业务协议. 使用 <code>UNNECESSARY</code> 可以把"不得发生舍入"变成运行时校验.</span><span data-lang="en"><code>HALF_EVEN</code> and <code>HALF_UP</code> are common for money, but the domain contract must decide. Use <code>UNNECESSARY</code> to turn "rounding must not occur" into a runtime check.</span></div></article>
+      <article class="function-doc" id="advanced-math-context" data-search-name="math_context precision context 精度上下文"><h3>math_context <span class="kind">struct</span></h3><p data-lang="zh-CN">将有效数字位数和舍入模式组合为可复用的运算策略. precision 为 0 表示不限精度,此时运算必须返回精确结果.</p><p data-lang="en">Combines significant-digit precision and a rounding mode into a reusable operation policy. A precision of zero means unlimited precision and requires an exact result.</p><pre class="signature"><code>math_context(std::int32_t precision);
+math_context(std::int32_t precision, round_mode mode);
+
+std::int32_t precision() const;
+round_mode get_rounding_mode() const;
+
+math_context::UNLIMITED;  // precision 0, HALF_UP
+math_context::DECIMAL32;  // precision 7, HALF_EVEN
+math_context::DECIMAL64;  // precision 16, HALF_EVEN
+math_context::DECIMAL128; // precision 34, HALF_EVEN</code></pre><p data-lang="zh-CN">预定义 context 只复用 IEEE 754 对应格式的 precision 和舍入模式. 它们不限制指数范围,也不模拟固定宽度十进制浮点格式的溢出和下溢.</p><p data-lang="en">The predefined contexts reuse only the precision and rounding mode of the corresponding IEEE 754 formats. They do not constrain exponent range or emulate fixed-width decimal overflow and underflow.</p><pre><code class="language-cpp">const math_context calculation(24, round_mode::HALF_EVEN);
+const decimal result = decimal("1").divide(decimal("7"), calculation);</code></pre></article>
+      <article class="function-doc" id="advanced-bigint" data-search-name="bigint arbitrary precision integer 大整数"><h3>bigint <span class="kind">struct</span></h3><p data-lang="zh-CN"><code>bigint</code> 是有符号任意精度整数,也是 <code>decimal</code> 处理大型未缩放值的基础. 应用可以直接使用它执行大整数算术,位运算,最大公约数,模运算和素数相关操作.</p><p data-lang="en"><code>bigint</code> is a signed arbitrary-precision integer and the foundation for large unscaled <code>decimal</code> values. Applications may also use it directly for integer arithmetic, bit operations, GCD, modular arithmetic, and prime-related operations.</p><pre class="signature"><code>bigint();
+bigint(std::int64_t value);
+bigint(const std::string&amp; value);
+bigint(const std::string&amp; value, std::int32_t radix);
+
+bigint add(const bigint&amp; value) const;
+bigint subtract(const bigint&amp; value) const;
+bigint multiply(const bigint&amp; value) const;
+bigint divide(const bigint&amp; value) const;
+bigint pow(std::int32_t exponent) const;
+bigint gcd(const bigint&amp; value) const;
+bigint mod_pow(const bigint&amp; exponent, const bigint&amp; modulus) const;
+std::string to_string() const;
+std::string to_string(std::int32_t radix) const;</code></pre><pre><code class="language-cpp">const bigint population("123456789012345678901234567890");
+const bigint doubled = population.multiply(bigint(2));
+const decimal measured(doubled, 3);</code></pre><div class="callout warning"><span data-lang="zh-CN"><code>mutable_bigint</code>,<code>signed_mutable_bigint</code>,<code>jarray</code> 和 <code>bit_sieve</code> 是算法和存储实现类型,不是应用层入口. 普通使用方不应依赖其表示细节.</span><span data-lang="en"><code>mutable_bigint</code>, <code>signed_mutable_bigint</code>, <code>jarray</code>, and <code>bit_sieve</code> are algorithm and storage implementation types, not application entry points. Ordinary consumers should not depend on their representation details.</span></div></article>
+    </section>
+
+    <section id="faq"><h2>FAQ</h2>
+      <details><summary><span data-lang="zh-CN">为什么金额不要从 double 构造？</span><span data-lang="en">Why avoid constructing money from double?</span></summary><div class="details-body"><p data-lang="zh-CN">很多十进制小数不能被二进制浮点精确表示。使用字符串构造可以精确保留输入的十进制值与 scale。</p><p data-lang="en">Many decimal fractions have no exact binary floating representation. String construction preserves the decimal input and scale exactly.</p></div></details>
+      <details><summary><span data-lang="zh-CN">为什么 divide() 有时会抛异常？</span><span data-lang="en">Why can divide() throw?</span></summary><div class="details-body"><p data-lang="zh-CN">无舍入参数的重载要求结果可以有限且精确地表示。对于 <code>1 / 3</code>，请传入目标 scale 和舍入模式，或传入有限精度 <code>math_context</code>。</p><p data-lang="en">The overload without rounding arguments requires a finite exact decimal result. For <code>1 / 3</code>, provide a target scale and mode or a finite-precision <code>math_context</code>.</p></div></details>
+      <details><summary><span data-lang="zh-CN">什么时候使用 equals()？</span><span data-lang="en">When should I use equals()?</span></summary><div class="details-body"><p data-lang="zh-CN">当 scale 也是对象身份的一部分时使用，例如缓存键或需要区分 <code>2.0</code> 和 <code>2.00</code> 的场景。只比较业务数值时使用 <code>compare_to() == 0</code>。</p><p data-lang="en">Use it when scale is part of identity, such as a cache key or when <code>2.0</code> and <code>2.00</code> must differ. For numeric equality, use <code>compare_to() == 0</code>.</p></div></details>
+      <footer><p>decimal documentation · C++17 · MIT License</p></footer>
+    </section>
+  </main>
+  <aside id="page-navigation" aria-label="On this page"><h2><span data-lang="zh-CN">本章目录</span><span data-lang="en">On this chapter</span></h2><ul class="nav-list" id="chapter-outline"></ul></aside>
+  <div id="search-dialog" role="dialog" aria-modal="true" aria-labelledby="search-status" hidden><div class="search-panel"><div class="search-row"><input id="search-input" type="search" autocomplete="off" placeholder="搜索 decimal 函数 / Search decimal functions"><button class="top-button" id="search-close" type="button">Esc</button></div><p id="search-status" aria-live="polite"></p><ul id="search-results"></ul></div></div><div id="copy-status" class="skip" aria-live="polite"></div>
+  <script>
+  (()=>{
+    const root=document.documentElement;root.classList.replace('no-js','js');
+    const iconCopy='<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>';
+    const iconCheck='<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>';
+    const language=localStorage.getItem('decimal-docs-language')||(navigator.language.toLowerCase().startsWith('zh')?'zh-CN':'en');
+    function setLanguage(value){root.dataset.language=value;root.lang=value;localStorage.setItem('decimal-docs-language',value);document.title=value==='zh-CN'?'decimal C++ 使用手册':'decimal C++ User Manual';refreshLabels();renderOutline(activeSection)}
+    let theme=localStorage.getItem('decimal-docs-theme');if(!['light','dark'].includes(theme))theme='light';root.dataset.theme=theme;
+    document.querySelector('#language-toggle').addEventListener('click',()=>setLanguage(root.dataset.language==='zh-CN'?'en':'zh-CN'));
+    document.querySelector('#theme-toggle').addEventListener('click',()=>{theme=theme==='light'?'dark':'light';root.dataset.theme=theme;localStorage.setItem('decimal-docs-theme',theme)});
+    const menu=document.querySelector('#menu-toggle');menu.addEventListener('click',()=>{const open=document.body.classList.toggle('menu-open');menu.setAttribute('aria-expanded',String(open))});
+    document.querySelectorAll('#primary-navigation a').forEach(a=>a.addEventListener('click',()=>{document.body.classList.remove('menu-open');menu.setAttribute('aria-expanded','false')}));
+    const escapeHtml=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const highlightPlain=value=>escapeHtml(value).replace(/\b(const|static|return|auto|try|catch|int|float|double|bool|void|struct|class|true|false)\b/g,'<span class="token-keyword">$1</span>');
+    document.querySelectorAll('pre code').forEach(code=>{if(code.classList.contains('language-text'))return;const source=code.textContent;let html='',end=0;for(const match of source.matchAll(/\/\/[^\n]*|"(?:\\.|[^"\\])*"/g)){html+=highlightPlain(source.slice(end,match.index));const kind=match[0].startsWith('//')?'comment':'string';html+=`<span class="token-${kind}">${escapeHtml(match[0])}</span>`;end=match.index+match[0].length}code.innerHTML=html+highlightPlain(source.slice(end))});
+    document.querySelectorAll('pre code').forEach(code=>{if(code.classList.contains('language-text'))return;const button=document.createElement('button');button.className='copy-button js-only';button.type='button';button.innerHTML=iconCopy;button.setAttribute('aria-label','复制代码');button.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(code.textContent);button.innerHTML=iconCheck;document.querySelector('#copy-status').textContent=root.dataset.language==='zh-CN'?'代码已复制':'Code copied'}catch{document.querySelector('#copy-status').textContent=root.dataset.language==='zh-CN'?'无法复制':'Copy unavailable'}setTimeout(()=>button.innerHTML=iconCopy,1300)});code.parentElement.append(button)});
+    function refreshLabels(){const zh=root.dataset.language==='zh-CN';menu.setAttribute('aria-label',zh?'打开导航':'Open navigation');document.querySelector('#search-open').setAttribute('aria-label',zh?'搜索':'Search');document.querySelector('#theme-toggle').setAttribute('aria-label',zh?'切换明暗主题':'Toggle color theme');document.querySelector('#language-toggle').setAttribute('aria-label',zh?'切换语言':'Switch language');document.querySelectorAll('.copy-button').forEach(b=>b.setAttribute('aria-label',zh?'复制代码':'Copy code'))}
+    const sections=[...document.querySelectorAll('#main-content>section')],navLinks=[...document.querySelectorAll('#primary-navigation a')];let activeSection=sections[0];
+    function visibleText(el){const chosen=el.querySelector(`[data-lang="${root.dataset.language}"]`);return(chosen||el).textContent.trim()}
+    function renderOutline(section){const list=document.querySelector('#chapter-outline');list.textContent='';const headings=[...section.querySelectorAll('h2[id],h3[id],.function-doc[id]>h3')];headings.forEach(h=>{const target=h.closest('.function-doc')||h;if(!target.id)return;const li=document.createElement('li'),a=document.createElement('a');a.href='#'+target.id;a.textContent=visibleText(h);li.append(a);list.append(li)});document.querySelector('#page-navigation').style.display=headings.length?'':'none'}
+    const observer=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top)[0];if(!visible)return;activeSection=visible.target;navLinks.forEach(a=>a.removeAttribute('aria-current'));const current=navLinks.find(a=>a.hash==='#'+activeSection.id);if(current)current.setAttribute('aria-current','location');renderOutline(activeSection)},{rootMargin:'-15% 0px -70% 0px'});sections.forEach(s=>observer.observe(s));
+    function revealHash(){if(!location.hash)return;const target=document.querySelector(location.hash);if(target){const details=target.closest('details');if(details)details.open=true;setTimeout(()=>target.scrollIntoView({block:'start'}),0)}}window.addEventListener('hashchange',revealHash);
+    const dialog=document.querySelector('#search-dialog'),input=document.querySelector('#search-input'),results=document.querySelector('#search-results'),status=document.querySelector('#search-status');const records=[...document.querySelectorAll('[data-search-name]')];
+    function closeSearch(){dialog.hidden=true;document.querySelector('#search-open').focus()}function renderSearch(){const q=input.value.trim().toLowerCase();results.textContent='';const matches=records.filter(r=>!q||(r.dataset.searchName+' '+r.textContent).toLowerCase().includes(q)).slice(0,30);status.textContent=root.dataset.language==='zh-CN'?`${matches.length} 条结果`:`${matches.length} result${matches.length===1?'':'s'}`;matches.forEach(r=>{const li=document.createElement('li'),a=document.createElement('a');a.href='#'+r.id;a.textContent=r.dataset.searchName.split(' ').slice(0,3).join(' ');a.addEventListener('click',closeSearch);li.append(a);results.append(li)})}
+    document.querySelector('#search-open').addEventListener('click',()=>{dialog.hidden=false;renderSearch();input.focus()});document.querySelector('#search-close').addEventListener('click',closeSearch);input.addEventListener('input',renderSearch);dialog.addEventListener('click',e=>{if(e.target===dialog)closeSearch()});document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!dialog.hidden)closeSearch();if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();dialog.hidden=false;renderSearch();input.focus()}});
+    setLanguage(language);renderOutline(activeSection);revealHash();
+  })();
+  </script>
+</body>
+</html>

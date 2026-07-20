@@ -13,6 +13,7 @@
 #include <array>
 #include <cassert>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,19 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+// 前向声明
+namespace decimal_detail {
+struct uint128_words;
+}
+struct math_context;
+struct mutable_bigint;
+struct signed_mutable_bigint;
+struct bigint;
+struct bit_sieve;
+struct decimal;
+template <typename T>
+struct jarray;
 
 // 编译器能力选择如下. portable 表示使用不依赖编译器扩展的纯 C++ 实现.
 //
@@ -308,9 +322,9 @@ enum class round_mode : std::int32_t {
   UNNECESSARY = 7,
 };
 
-// 将整型常量转换为 round_mode.
+// 将整型常量转换为 round_mode
 //
-// 合法范围为 [UP, UNNECESSARY] (含端点), 与上述枚举底层值一致.
+// 合法范围为 [UP, UNNECESSARY] (含端点), 与上述枚举底层值一致
 // 越界时抛出 std::invalid_argument.
 inline round_mode value_of(std::int32_t v) {
   if (v < static_cast<std::int32_t>(round_mode::UP) || v > static_cast<std::int32_t>(round_mode::UNNECESSARY)) {
@@ -320,34 +334,42 @@ inline round_mode value_of(std::int32_t v) {
 }
 
 // math_context
-// 不可变的数值运算上下文.
+// 控制 decimal 运算精度和舍入行为的值对象
 //
-// math_context 封装会影响数值运算的上下文设置,例如 decimal 运算使用的
-// 精度和舍入模式. precision 表示运算使用的十进制有效位数,0 表示不限精度;
-// rounding_mode 表示舍入算法.
+// precision 表示运算结果保留的十进制有效位数
+// precision == 0 表示不限精度,运算必须返回精确结果,rounding_mode 此时不参与计算
+// precision > 0 时先按数学意义计算精确结果,再使用 rounding_mode 舍入到指定有效位数
+//
+// DECIMAL32、DECIMAL64 和 DECIMAL128 只采用对应 IEEE 754 格式的精度和舍入模式
+// 这些预定义上下文不限制指数范围,也不会模拟固定宽度十进制浮点格式的溢出和下溢
+//
+// 这个 struct 按项目约定保持全公有,调用者应将其作为不可变值使用
 struct math_context {
-  // 精度为 0,舍入模式为 HALF_UP.
+  // 精度为 0,舍入模式为 HALF_UP
   static const math_context UNLIMITED;
 
-  // IEEE 754 decimal32 对应的 7 位精度,舍入模式为 HALF_EVEN.
+  // IEEE 754 decimal32 对应的 7 位精度,舍入模式为 HALF_EVEN
   static const math_context DECIMAL32;
 
-  // IEEE 754 decimal64 对应的 16 位精度,舍入模式为 HALF_EVEN.
+  // IEEE 754 decimal64 对应的 16 位精度,舍入模式为 HALF_EVEN
   static const math_context DECIMAL64;
 
-  // IEEE 754 decimal128 对应的 34 位精度,舍入模式为 HALF_EVEN.
+  // IEEE 754 decimal128 对应的 34 位精度,舍入模式为 HALF_EVEN
   static const math_context DECIMAL128;
 
+  // 有效位数的最小值
   static constexpr std::int32_t min_digits = 0;
+
+  // 默认的舍入方式
   static constexpr round_mode default_rounding_mode = round_mode::HALF_UP;
 
-  // 使用指定精度和默认 HALF_UP 舍入模式构造上下文.
+  // 使用指定 precision 和默认 HALF_UP 舍入模式构造上下文
+  // precision 必须非负,0 表示不限精度
   math_context(std::int32_t set_precision) : math_context(set_precision, default_rounding_mode) {
   }
 
-  // 使用指定精度和舍入模式构造上下文.
-  //
-  // set_precision 必须非负;否则抛出 std::invalid_argument("digits < 0").
+  // 使用指定 precision 和 rounding_mode 构造上下文
+  // set_precision 必须非负,否则抛出 std::invalid_argument
   math_context(std::int32_t set_precision, round_mode set_rounding_mode)
       : precision_(set_precision), rounding_mode_(set_rounding_mode) {
     if (set_precision < min_digits) {
@@ -355,19 +377,19 @@ struct math_context {
     }
   }
 
-  // 显式声明拷贝构造,避免接口行为依赖编译器隐式生成.
+  // 显式声明拷贝构造,避免接口行为依赖编译器隐式生成
   math_context(const math_context& other) = default;
 
-  // 显式声明拷贝赋值,保持值对象语义.
+  // 显式声明拷贝赋值,保持值对象语义
   math_context& operator=(const math_context& other) = default;
 
-  // 显式声明移动构造,移动后源对象恢复为 UNLIMITED 状态.
+  // 显式声明移动构造,移动后源对象恢复为 UNLIMITED 状态
   math_context(math_context&& other) noexcept : precision_(other.precision_), rounding_mode_(other.rounding_mode_) {
     other.precision_ = 0;
     other.rounding_mode_ = default_rounding_mode;
   }
 
-  // 显式声明移动赋值,移动后源对象恢复为 UNLIMITED 状态.
+  // 显式声明移动赋值,移动后源对象恢复为 UNLIMITED 状态
   math_context& operator=(math_context&& other) noexcept {
     if (this == &other) {
       return *this;
@@ -379,27 +401,27 @@ struct math_context {
     return *this;
   }
 
-  // 返回 precision 设置,始终非负.
+  // 返回 precision 设置,始终非负
   std::int32_t precision() const {
     return precision_;
   }
 
-  // 返回 rounding_mode 设置.
+  // 返回 rounding_mode 设置
   round_mode get_rounding_mode() const {
     return rounding_mode_;
   }
 
-  // 判断两个上下文是否具有完全相同的设置.
+  // 判断两个上下文是否具有完全相同的设置
   bool operator==(const math_context& other) const {
     return precision_ == other.precision_ && rounding_mode_ == other.rounding_mode_;
   }
 
-  // 判断两个上下文设置是否不相等.
+  // 判断两个上下文设置是否不相等
   bool operator!=(const math_context& other) const {
     return !(*this == other);
   }
 
-  // 返回 hash code.
+  // 返回由 precision 和 rounding_mode 共同计算的稳定哈希值
   std::int32_t hash_code() const {
     return precision_ + static_cast<std::int32_t>(rounding_mode_) * 59;
   }
@@ -418,7 +440,7 @@ template <typename T>
 struct jarray {
   static_assert(std::is_trivially_copyable_v<T>, "jarray<T> only support trivially copyable types");
 
-  // 默认构造空数组.
+  // 默认构造空数组
   jarray() = default;
 
   // 分配长度为 len 的数组; len 为 0 时不分配.
@@ -426,7 +448,7 @@ struct jarray {
     assert(len >= 0);
   }
 
-  // 从初始化列表构造 jarray.
+  // 从初始化列表构造 jarray
   jarray(std::initializer_list<T> init)
       : data_(init.size() > 0 ? new T[init.size()]() : nullptr), len_(static_cast<std::int32_t>(init.size())) {
     if (len_ > 0) {
@@ -434,14 +456,14 @@ struct jarray {
     }
   }
 
-  // 拷贝构造 jarray.
+  // 拷贝构造 jarray
   jarray(const jarray& other) : data_(other.len_ > 0 ? new T[other.len_]() : nullptr), len_(other.len_) {
     if (len_ > 0) {
       std::memcpy(data_, other.data_, std::size_t(len_) * sizeof(T));
     }
   }
 
-  // 拷贝赋值 jarray.
+  // 拷贝赋值 jarray
   jarray& operator=(const jarray& other) {
     if (this == &other) {
       return *this;
@@ -452,13 +474,13 @@ struct jarray {
     return *this;
   }
 
-  // 移动构造 jarray.
+  // 移动构造 jarray
   jarray(jarray&& other) noexcept : data_(other.data_), len_(other.len_) {
     other.data_ = nullptr;
     other.len_ = 0;
   }
 
-  // 移动赋值 jarray.
+  // 移动赋值 jarray
   jarray& operator=(jarray&& other) noexcept {
     if (this == &other) {
       return *this;
@@ -475,44 +497,44 @@ struct jarray {
     return *this;
   }
 
-  // 析构并释放数组存储.
+  // 析构并释放数组存储
   ~jarray() {
     delete[] data_;
   }
 
-  // 返回数组长度.
+  // 返回数组长度
   std::int32_t length() const {
     return len_;
   }
 
-  // 数组长度是否为 0.
+  // 数组长度是否为 0
   bool empty() const {
     return len_ == 0;
   }
 
-  // 返回指定下标的元素引用.
+  // 返回指定下标的元素引用
   T& operator[](std::int32_t index) {
     assert(index >= 0 && index < len_);
     return data_[index];
   }
 
-  // 返回指定下标的 const 元素引用.
+  // 返回指定下标的 const 元素引用
   const T& operator[](std::int32_t index) const {
     assert(index >= 0 && index < len_);
     return data_[index];
   }
 
-  // 返回底层数组指针.
+  // 返回底层数组指针
   T* data() {
     return data_;
   }
 
-  // 返回底层 const 数组指针.
+  // 返回底层 const 数组指针
   const T* data() const {
     return data_;
   }
 
-  // 重新分配数组存储.
+  // 重新分配数组存储
   void alloc(std::int32_t len) {
     assert(len >= 0);
     T* new_data = len > 0 ? new T[len]() : nullptr;
@@ -521,13 +543,13 @@ struct jarray {
     len_ = len;
   }
 
-  // 交换两个 jarray 的内容.
+  // 交换两个 jarray 的内容
   void swap(jarray& other) noexcept {
     std::swap(data_, other.data_);
     std::swap(len_, other.len_);
   }
 
-  // 用 val 填充整个数组.
+  // 用 val 填充整个数组
   void fill(T val) {
     if (len_ == 0) {
       return;
@@ -536,7 +558,7 @@ struct jarray {
     std::fill(data_, data_ + len_, val);
   }
 
-  // 用 val 填充 [from, to) 区间.
+  // 用 val 填充 [from, to) 区间
   void fill(std::int32_t from, std::int32_t to, T val) {
     assert(from >= 0);
     assert(from <= to);
@@ -547,7 +569,7 @@ struct jarray {
     std::fill(data_ + from, data_ + to, val);
   }
 
-  // 拷贝为指定长度的新数组.
+  // 拷贝为指定长度的新数组
   jarray copy_of(std::int32_t new_len) const {
     assert(new_len >= 0);
     jarray result(new_len);
@@ -558,7 +580,7 @@ struct jarray {
     return result;
   }
 
-  // 拷贝指定区间为新数组.
+  // 拷贝指定区间为新数组
   jarray copy_of_range(std::int32_t from, std::int32_t to) const {
     assert(from >= 0);
     assert(from <= to);
@@ -573,24 +595,24 @@ struct jarray {
     return result;
   }
 
-  // 返回数组的深拷贝.
+  // 返回数组的深拷贝
   jarray clone() const {
     return jarray(*this);
   }
 
-  // 返回指向首元素的迭代器.
+  // 返回指向首元素的迭代器
   T* begin() {
     return data_;
   }
-  // 返回指向尾后位置的迭代器.
+  // 返回指向尾后位置的迭代器
   T* end() {
     return len_ == 0 ? nullptr : data_ + len_;
   }
-  // 返回 const 首元素迭代器.
+  // 返回 const 首元素迭代器
   const T* begin() const {
     return data_;
   }
-  // 返回 const 尾后迭代器.
+  // 返回 const 尾后迭代器
   const T* end() const {
     return len_ == 0 ? nullptr : data_ + len_;
   }
@@ -599,7 +621,6 @@ struct jarray {
   std::int32_t len_{0};
 };
 
-// arraycopy(src, srcPos, dst, dstPos, len)
 template <typename T>
 void jarray_copy(const jarray<T>& src, std::int32_t src_pos, jarray<T>& dst, std::int32_t dst_pos, std::int32_t len) {
   if (src_pos < 0 || dst_pos < 0 || len < 0) {
@@ -620,14 +641,25 @@ void jarray_copy(const jarray<T>& src, std::int32_t src_pos, jarray<T>& dst, std
 }
 
 // mutable_bigint
+// bigint 和 decimal 内部运算使用的可变非负多精度整数
+//
+// 当前值只保存绝对值而不保存符号,所有 limb 均按无符号 32 位数解释
+// value_ 使用大端顺序,有效 magnitude 位于 [offset_, offset_ + int_len_)
+// 有效区间可以只占底层数组的一部分,从而在迭代运算中复用已有存储并减少重新分配
+//
+// int_len_ == 0 表示 0,规范非零值的第一个有效 limb 必须非零
+// normalize() 用于移除有效区间的前导零并恢复规范形式
+// 算术、移位和除法等操作会原地修改当前对象或显式传入的结果对象
+//
+// 这个 struct 按项目约定保持全公有,仅供内部算法使用
 struct mutable_bigint {
-  // 大端 limb 数组,存放绝对值;有效区间由 offset_ 与 int_len_ 界定.
-  // limb = 大整数绝对值在数组里的一个 std::uint32_t 存储单元.
+  // 大端 limb 数组,存放绝对值;有效区间由 offset_ 与 int_len_ 界定
+  // limb = 大整数绝对值在数组里的一个 std::uint32_t 存储单元
   jarray<std::uint32_t> value_;
   // value_ 数组中当前用于保存本数绝对值的 32 位单元数量.数值从 offset_ 开始,
-  // offset_ + int_len_ 可以小于 value_.length().
+  // offset_ + int_len_ 可以小于 value_.length()
   std::int32_t int_len_{0};
-  // 本数绝对值在 value_ 数组中的起始偏移量.
+  // 本数绝对值在 value_ 数组中的起始偏移量
   std::int32_t offset_{0};
 
   // 常量声明
@@ -637,32 +669,43 @@ struct mutable_bigint {
   static constexpr std::int32_t BURNIKEL_ZIEGLER_OFFSET = 40;
   static const mutable_bigint ONE;
 
-  // 默认构造函数,创建一个容量为 1 个 limb 的空 mutable_bigint.
+  // 构造容量为一个 limb 的规范零值
   mutable_bigint() {
     value_ = jarray<std::uint32_t>(1);
     int_len_ = 0;
   }
 
-  // 使用一个 32 位 limb 构造数值.
+  // 使用单个无符号 32 位 limb 作为 magnitude 构造对象
+  // 构造函数不执行 normalize(),val == 0 时有效区间仍包含一个零 limb
   mutable_bigint(std::uint32_t val) {
     value_ = jarray<std::uint32_t>(1);
     int_len_ = 1;
     value_[0] = val;
   }
 
-  // 使用给定的大端 limb 数组构造数值,数组全长作为有效长度.
+  // 复制大端 magnitude 数组并将完整数组作为有效区间
+  // 构造函数不移除前导零,调用方在需要规范形式时应执行 normalize()
   mutable_bigint(const jarray<std::uint32_t>& val) {
     value_ = jarray<std::uint32_t>(val);
     int_len_ = val.length();
   }
 
-  // 使用另一个 mutable_bigint 的有效数值构造副本.
+  // 接管大端 magnitude 数组并将完整数组作为有效区间
+  // 构造函数不移除前导零,调用方在需要规范形式时应执行 normalize()
+  mutable_bigint(jarray<std::uint32_t>&& val) noexcept : value_(std::move(val)), int_len_(value_.length()) {
+  }
+
+  // 复制 bigint 的规范 magnitude 构造非负可变值,忽略原值符号
+  explicit mutable_bigint(const bigint& val);
+
+  // 复制 val 的有效区间并将新对象的 offset_ 设为 0
   mutable_bigint(const mutable_bigint& val) {
     int_len_ = val.int_len_;
     value_ = val.value_.copy_of_range(val.offset_, val.offset_ + int_len_);
   }
 
-  // 显式声明拷贝赋值,复制另一个对象的有效数值.
+  // 用 val 的有效区间替换当前值,自赋值时保持不变
+  // 赋值后 offset_ 为 0,不会复制 val 有效区间之外的备用容量
   mutable_bigint& operator=(const mutable_bigint& val) {
     if (this == &val) {
       return *this;
@@ -673,14 +716,16 @@ struct mutable_bigint {
     return *this;
   }
 
-  // 显式声明移动构造,移动后源对象恢复为零.
+  // 接管 val 的底层存储、有效长度和偏移量
+  // 移动后 val 变为 int_len_ == 0 且 offset_ == 0 的零值
   mutable_bigint(mutable_bigint&& val) noexcept
       : value_(std::move(val.value_)), int_len_(val.int_len_), offset_(val.offset_) {
     val.int_len_ = 0;
     val.offset_ = 0;
   }
 
-  // 显式声明移动赋值,移动后源对象恢复为零.
+  // 用 val 的底层存储、有效长度和偏移量替换当前对象
+  // 自移动时保持不变,移动后 val 重置为零
   mutable_bigint& operator=(mutable_bigint&& val) noexcept {
     if (this == &val) {
       return *this;
@@ -693,25 +738,29 @@ struct mutable_bigint {
     return *this;
   }
 
-  // 清空当前对象以便复用,并把已分配数组中的内容全部置零.
+  // 将当前值重置为规范零,并清零底层数组的全部 limb
+  // 保留已分配容量以供后续运算复用
   void clear() {
     offset_ = 0;
     int_len_ = 0;
     value_.fill(0);
   }
 
-  // 将当前对象设为零,并去掉偏移,但不清空底层数组.
+  // 仅将 int_len_ 和 offset_ 重置为 0,逻辑上把当前值设为零
+  // 底层数组内容和容量保持不变,旧 limb 不再属于有效区间
   void reset() {
     offset_ = 0;
     int_len_ = 0;
   }
 
-  // 设置有效数值中指定下标的 limb.
+  // 将有效区间内下标 index 的 limb 设置为 val
+  // 调用方负责保证 index 位于 [0, int_len_)
   void set_int(std::int32_t index, std::uint32_t val) {
     value_[offset_ + index] = val;
   }
 
-  // 将 value_ 设置为指定数组,并把 int_len_ 设置为指定长度.
+  // 复制大端数组 val,并将前 length 个 limb 设为从 offset_ == 0 开始的有效区间
+  // length 必须位于 [0, val.length()],函数不执行 normalize()
   void set_value(const jarray<std::uint32_t>& val, std::int32_t length) {
     assert(length >= 0);
     assert(length <= val.length());
@@ -720,7 +769,18 @@ struct mutable_bigint {
     offset_ = 0;
   }
 
-  // 将 src 的有效数值复制到当前对象中.
+  // 接管大端数组 val,并将前 length 个 limb 设为从 offset_ == 0 开始的有效区间
+  // length 必须位于 [0, val.length()],函数不执行 normalize()
+  void set_value(jarray<std::uint32_t>&& val, std::int32_t length) noexcept {
+    assert(length >= 0);
+    assert(length <= val.length());
+    value_ = std::move(val);
+    int_len_ = length;
+    offset_ = 0;
+  }
+
+  // 将 src 的有效区间复制到当前对象并把 offset_ 设为 0
+  // 现有容量足够时复用底层数组,src 保持不变
   void copy_value(const mutable_bigint& src) {
     const std::int32_t len = src.int_len_;
     if (value_.length() < len) {
@@ -731,7 +791,8 @@ struct mutable_bigint {
     offset_ = 0;
   }
 
-  // 将指定数组完整复制到当前对象中,并以数组长度作为有效长度.
+  // 将完整大端数组 val 复制为当前有效区间并把 offset_ 设为 0
+  // 现有容量足够时复用底层数组,函数不移除前导零
   void copy_value(const jarray<std::uint32_t>& val) {
     const std::int32_t len = val.length();
     if (value_.length() < len) {
@@ -742,7 +803,8 @@ struct mutable_bigint {
     offset_ = 0;
   }
 
-  // 将当前数转换为紧凑的大端 limb 数组,长度等于 int_len_,不包含前导零.
+  // 返回仅包含当前有效区间的独立大端 magnitude 数组
+  // 返回数组长度等于 int_len_,不包含备用容量
   jarray<std::uint32_t> to_int_array() const {
     jarray<std::uint32_t> result(int_len_);
     for (std::int32_t i = 0; i < int_len_; ++i) {
@@ -751,27 +813,47 @@ struct mutable_bigint {
     return result;
   }
 
-  // 当前数是否等于 0.
+  // 使用 sign 和当前 magnitude 构造规范 bigint
+  // 当前值为零或 sign == 0 时返回 bigint::ZERO,非零时 sign 应为 -1 或 1
+  bigint to_bigint(std::int32_t sign);
+
+  // 规范化当前对象并将其转换为非负 bigint
+  bigint to_bigint();
+
+  // 使用 sign * magnitude 作为 unscaled value、使用 scale 构造 decimal
+  // magnitude 可放入 std::int64_t 时使用 compact 表示,否则使用 bigint 表示
+  decimal to_decimal(std::int32_t sign, std::int32_t scale);
+
+  // 返回带 sign 的 std::int64_t compact 值
+  // magnitude 无法精确表示为 compact 值时返回 decimal::INFLATED
+  std::int64_t to_compact_value(std::int32_t sign);
+
+  // 将当前非负 magnitude 转换为十进制字符串
+  std::string to_string();
+
+  // 返回有效区间是否为空
+  // 调用前应保证对象已规范化,否则单个零 limb 不会被识别为零
   bool is_zero() const {
     return int_len_ == 0;
   }
 
-  // 当前数是否等于 1.
+  // 返回规范 magnitude 是否恰好等于 1
   bool is_one() const {
     return int_len_ == 1 && value_[offset_] == 1;
   }
 
-  // 当前数是否为偶数.
+  // 返回当前 magnitude 是否为偶数,规范零值视为偶数
   bool is_even() const {
     return int_len_ == 0 || ((value_[offset_ + int_len_ - 1] & 1U) == 0);
   }
 
-  // 当前数是否为奇数.
+  // 返回当前 magnitude 是否为奇数,规范零值返回 false
   bool is_odd() const {
     return !is_zero() && ((value_[offset_ + int_len_ - 1] & 1U) == 1);
   }
 
-  // 确保对象处于规范形式:去掉前导 0 limb;如果数值为 0,则 int_len_ 为 0 且 offset_ 置 0.
+  // 从有效区间移除所有前导零 limb
+  // 规范化后非零值的首个有效 limb 非零,零值的 int_len_ 和 offset_ 均为 0
   void normalize() {
     if (int_len_ == 0) {
       offset_ = 0;
@@ -793,7 +875,8 @@ struct mutable_bigint {
     offset_ = int_len_ == 0 ? 0 : offset_ + num_zeros;
   }
 
-  // 当前对象是否处于规范形式:没有前导 0,且 int_len_ + offset_ 不越界.
+  // 返回当前对象是否满足有效区间和前导零不变量
+  // 空有效区间视为规范,非空区间必须位于 value_ 内且首 limb 非零
   bool is_normal() const {
     if (int_len_ + offset_ > value_.length()) {
       return false;
@@ -804,23 +887,25 @@ struct mutable_bigint {
     return value_[offset_] != 0;
   }
 
-  // 返回 limb 中尾随零 bit 的个数.
+  // 返回 32 位 limb 从最低位开始连续零 bit 的数量
+  // limb == 0 时返回 32
   static std::int32_t number_of_trailing_zeros(std::uint32_t limb) {
     return decimal_detail::count_trailing_zeros(limb);
   }
 
-  // 返回 limb 中前导零 bit 的个数.
+  // 返回 32 位 limb 从最高位开始连续零 bit 的数量
+  // limb == 0 时返回 32
   static std::int32_t number_of_leading_zeros(std::uint32_t limb) {
     return decimal_detail::count_leading_zeros(limb);
   }
 
-  // 返回 limb 的有效 bit 长度 (不含前导零).
+  // 返回 limb 的有效 bit 长度,limb == 0 时返回 0
   static std::int32_t bit_length_for_limb(std::uint32_t limb) {
     return 32 - number_of_leading_zeros(limb);
   }
 
-  // 用一个 32-bit limb d 去除 64-bit n.
-  // 返回值高 32 bit 为余数,低 32 bit 为商.
+  // 将无符号 64 位 n 除以无符号 32 位 d
+  // 返回值高 32 bit 保存余数,低 32 bit 保存商,d 必须非零且商必须能放入 32 bit
   static std::uint64_t div_word(std::uint64_t n, std::uint32_t d) {
     const std::uint64_t d_long = d & 0xffffffffULL;
     std::uint64_t q = 0;
@@ -835,12 +920,13 @@ struct mutable_bigint {
     return (r << 32) | (q & 0xffffffffULL);
   }
 
-  // 按无符号 64-bit 值比较 one 和 two;当 one 大于 two 时返回 true.
+  // 按无符号 64 位数值比较 one 和 two,one > two 时返回 true
   static bool unsigned_long_compare(std::uint64_t one, std::uint64_t two) {
     return one > two;
   }
 
-  // long 除法专用的乘减辅助函数;dh 为除数高 32 bit,dl 为除数低 32 bit.
+  // 从 q 的指定位置减去无符号 64 位数 (dh, dl) 与单 limb x 的乘积
+  // 原地更新 q 并返回最高借位,用于双 limb 除数的商估计校正
   std::int32_t mulsub_long(jarray<std::uint32_t>& q, std::uint32_t dh, std::uint32_t dl, std::uint32_t x,
                            std::int32_t offset) {
     const std::uint64_t x_long = x & 0xffffffffULL;
@@ -865,7 +951,8 @@ struct mutable_bigint {
     return static_cast<std::int32_t>(carry);
   }
 
-  // 除法用辅助函数:从 q 的指定 offset 位置减去 a*x,返回 borrow.
+  // 从 q 的指定位置减去 a[0, len) 与单 limb x 的乘积
+  // 原地更新 q 并返回最高借位,用于 Knuth Algorithm D
   std::int32_t mulsub(jarray<std::uint32_t>& q, const jarray<std::uint32_t>& a, std::uint32_t x, std::int32_t len,
                       std::int32_t offset) {
     const std::uint64_t x_long = x & 0xffffffffULL;
@@ -886,7 +973,8 @@ struct mutable_bigint {
     return static_cast<std::int32_t>(carry);
   }
 
-  // 与 mulsub 类似,但不更新 q 数组,只返回最终 borrow.
+  // 计算从 q 的指定位置减去 a[0, len) 与单 limb x 的乘积会产生的最高借位
+  // 不修改 q,用于不需要保存最终余数的除法路径
   std::int32_t mulsub_borrow(const jarray<std::uint32_t>& q, const jarray<std::uint32_t>& a, std::uint32_t x,
                              std::int32_t len, std::int32_t offset) {
     const std::uint64_t x_long = x & 0xffffffffULL;
@@ -906,7 +994,8 @@ struct mutable_bigint {
     return static_cast<std::int32_t>(carry);
   }
 
-  // 除法校正用辅助函数:把除数 a 加回 result 的指定 offset 位置.
+  // 将大端 magnitude a 加回 result 的指定位置并返回最高进位
+  // 用于商估计过大时撤销一次 Knuth 乘减
   std::int32_t divadd(const jarray<std::uint32_t>& a, jarray<std::uint32_t>& result, std::int32_t offset) {
     std::uint64_t carry = 0;
 
@@ -919,7 +1008,8 @@ struct mutable_bigint {
     return static_cast<std::int32_t>(carry);
   }
 
-  // long 除法专用的 divadd 版本;dh 为除数高 32 bit,dl 为除数低 32 bit.
+  // 将无符号 64 位数 (dh, dl) 加回 result 的指定位置并返回最高进位
+  // 用于双 limb 除数的商估计校正
   std::int32_t divadd_long(std::uint32_t dh, std::uint32_t dl, jarray<std::uint32_t>& result, std::int32_t offset) {
     std::uint64_t carry = 0;
 
@@ -932,7 +1022,8 @@ struct mutable_bigint {
     return static_cast<std::int32_t>(carry);
   }
 
-  // 将 src 指定范围左移 shift bit 后复制到 dst.
+  // 将 src[src_from, src_from + src_len) 左移 shift bit 后写入 dst 的指定位置
+  // 调用方必须保证 0 < shift < 32 且源、目标区间有效
   static void copy_and_shift(const jarray<std::uint32_t>& src, std::int32_t src_from, std::int32_t src_len,
                              jarray<std::uint32_t>& dst, std::int32_t dst_from, std::int32_t shift) {
     const std::int32_t n2 = 32 - shift;
@@ -945,7 +1036,8 @@ struct mutable_bigint {
     dst[dst_from + src_len - 1] = c << shift;
   }
 
-  // 用一个 32-bit limb divisor 除当前对象,商写入 quotient,返回余数.
+  // 将当前非负 magnitude 除以单 limb 非零 divisor
+  // 商覆盖写入 quotient 并规范化,返回小于 divisor 的无符号余数
   std::uint32_t divide_one_word(std::uint32_t divisor, mutable_bigint& quotient) const {
     const std::uint64_t divisor_long = divisor & 0xffffffffULL;
 
@@ -1000,28 +1092,24 @@ struct mutable_bigint {
     return shift > 0 ? static_cast<std::uint32_t>((rem % divisor)) : rem;
   }
 
-  // Knuth Algorithm D 的多 limb 除法主体;商写入 quotient,按需返回余数.
+  // 使用 Knuth Algorithm D 将当前 magnitude 除以至少两个 limb 的 div
+  // 商覆盖写入 quotient,need_remainder 为 true 时返回规范余数,否则返回零工作对象
   mutable_bigint divide_magnitude(const mutable_bigint& div, mutable_bigint& quotient, bool need_remainder) {
     const std::int32_t shift = number_of_leading_zeros(div.value_[div.offset_]);
     const std::int32_t dlen = div.int_len_;
     jarray<std::uint32_t> divisor;
-    mutable_bigint rem;
+    mutable_bigint rem(jarray<std::uint32_t>{});
 
     if (shift > 0) {
       divisor = jarray<std::uint32_t>(dlen);
       copy_and_shift(div.value_, div.offset_, dlen, divisor, 0, shift);
       if (number_of_leading_zeros(value_[offset_]) >= shift) {
         jarray<std::uint32_t> remarr(int_len_ + 1);
-        rem = mutable_bigint(remarr);
-        rem.int_len_ = int_len_;
-        rem.offset_ = 1;
         copy_and_shift(value_, offset_, int_len_, remarr, 1, shift);
-        rem.value_ = std::move(remarr);
+        rem.set_value(std::move(remarr), int_len_);
+        rem.offset_ = 1;
       } else {
         jarray<std::uint32_t> remarr(int_len_ + 2);
-        rem = mutable_bigint(remarr);
-        rem.int_len_ = int_len_ + 1;
-        rem.offset_ = 1;
         std::int32_t r_from = offset_;
         std::uint32_t c = 0;
         const std::int32_t n2 = 32 - shift;
@@ -1031,13 +1119,13 @@ struct mutable_bigint {
           remarr[i] = (b << shift) | (c >> n2);
         }
         remarr[int_len_ + 1] = c << shift;
-        rem.value_ = std::move(remarr);
+        rem.set_value(std::move(remarr), int_len_ + 1);
+        rem.offset_ = 1;
       }
     } else {
       divisor = div.value_.copy_of_range(div.offset_, div.offset_ + div.int_len_);
-      rem = mutable_bigint(jarray<std::uint32_t>(int_len_ + 1));
+      rem.set_value(jarray<std::uint32_t>(int_len_ + 1), int_len_);
       jarray_copy(value_, offset_, rem.value_, 1, int_len_);
-      rem.int_len_ = int_len_;
       rem.offset_ = 1;
     }
 
@@ -1132,15 +1220,20 @@ struct mutable_bigint {
       rem.normalize();
     }
     quotient.normalize();
-    return need_remainder ? rem : mutable_bigint();
+    if (need_remainder) {
+      return std::move(rem);
+    }
+    return mutable_bigint();
   }
 
-  // Knuth O(n^2) 除法.
+  // 使用 Knuth 长除法计算当前值除以 b 的商和余数
+  // 商覆盖写入 quotient 并返回余数,b 为零时抛出 std::runtime_error
   mutable_bigint divide_knuth(const mutable_bigint& b, mutable_bigint& quotient) {
     return divide_knuth(b, quotient, true);
   }
 
-  // 计算当前对象除以 b 的商和余数;商写入 quotient,返回余数.
+  // 使用 Knuth 长除法计算当前值除以 b 的商
+  // need_remainder 为 true 时返回余数,否则允许跳过余数写入,b 为零时抛出异常
   mutable_bigint divide_knuth(const mutable_bigint& b, mutable_bigint& quotient, bool need_remainder) {
     if (b.int_len_ == 0) {
       throw std::runtime_error("divide by zero");
@@ -1193,7 +1286,8 @@ struct mutable_bigint {
     return divide_magnitude(b, quotient, need_remainder);
   }
 
-  // 将当前对象设为 n 个 limb,且每个 bit 都为 1.
+  // 将当前值设为由 n 个 0xffffffff limb 组成的规范 magnitude
+  // 现有容量不足时扩容,否则复用底层数组
   void ones(std::int32_t n) {
     if (n > value_.length()) {
       value_ = jarray<std::uint32_t>(n);
@@ -1203,7 +1297,8 @@ struct mutable_bigint {
     int_len_ = n;
   }
 
-  // 只保留当前对象的低 n 个 limb.
+  // 原地丢弃当前值高于最低 n 个 limb 的部分
+  // n 不小于 int_len_ 时保持不变
   void keep_lower(std::int32_t n) {
     if (int_len_ >= n) {
       offset_ += int_len_ - n;
@@ -1211,8 +1306,9 @@ struct mutable_bigint {
     }
   }
 
-  // 返回当前对象低 n 个 limb 组成的 mutable_bigint.
-  mutable_bigint get_lower(std::int32_t n) const {
+  // 返回当前值最低 n 个 limb 组成的规范 mutable_bigint 副本
+  // 当前值为零时返回零,n 大于有效长度时返回当前值的完整副本
+  mutable_bigint get_lower_mutable(std::int32_t n) const {
     if (is_zero()) {
       return mutable_bigint();
     }
@@ -1230,7 +1326,11 @@ struct mutable_bigint {
     return mutable_bigint(value_.copy_of_range(offset_ + int_len_ - len, offset_ + int_len_));
   }
 
-  // 返回从 index*block_length 开始的 block_length 个 limb,供 Burnikel-Ziegler 除法使用.
+  // 返回当前值最低 n 个 limb 组成的规范非负 bigint
+  bigint get_lower(std::int32_t n);
+
+  // 返回 Burnikel-Ziegler 除法从低位开始编号的第 index 个 limb 块
+  // 每块最多包含 block_length 个 limb,超出有效范围时返回零
   mutable_bigint get_block(std::int32_t index, std::int32_t num_blocks, std::int32_t block_length) const {
     const std::int32_t block_start = index * block_length;
     if (block_start >= int_len_) {
@@ -1250,7 +1350,8 @@ struct mutable_bigint {
     return mutable_bigint(value_.copy_of_range(offset_ + int_len_ - block_end, offset_ + int_len_ - block_start));
   }
 
-  // Burnikel-Ziegler 算法 1:用 2n limb 的当前对象除以 n limb 的 b.
+  // 使用 Burnikel-Ziegler 递归算法计算 2n limb 被除数除以 n limb 除数 b
+  // 商覆盖写入 quotient 并返回余数,规模不满足条件时回退到 Knuth 除法
   mutable_bigint divide2n1n(const mutable_bigint& b, mutable_bigint& quotient) {
     const std::int32_t n = b.int_len_;
 
@@ -1272,7 +1373,8 @@ struct mutable_bigint {
     return r2;
   }
 
-  // Burnikel-Ziegler 算法 2:用 3n limb 的当前对象除以 2n limb 的 b.
+  // 使用 Burnikel-Ziegler 递归算法计算 3n limb 被除数除以 2n limb 除数 b
+  // 商覆盖写入 quotient 并返回余数
   mutable_bigint divide3n2n(const mutable_bigint& b, mutable_bigint& quotient) {
     const std::int32_t n = b.int_len_ / 2;
 
@@ -1281,7 +1383,7 @@ struct mutable_bigint {
 
     mutable_bigint b1(b);
     b1.safe_right_shift(32 * n);
-    mutable_bigint b2 = b.get_lower(n);
+    mutable_bigint b2 = b.get_lower_mutable(n);
 
     mutable_bigint r;
     mutable_bigint d;
@@ -1312,7 +1414,8 @@ struct mutable_bigint {
     return r;
   }
 
-  // 使用 Burnikel-Ziegler 算法计算当前对象除以 b 的商和余数.
+  // 使用 Burnikel-Ziegler 分块除法计算当前值除以 b 的商和余数
+  // 商覆盖写入 quotient 并返回余数,当前对象和 b 保持不变
   mutable_bigint divide_and_remainder_burnikel_ziegler(const mutable_bigint& b, mutable_bigint& quotient) {
     const std::int32_t r = int_len_;
     const std::int32_t s = b.int_len_;
@@ -1362,12 +1465,14 @@ struct mutable_bigint {
     return ri;
   }
 
-  // 返回 this / val 的商, 写入 quotient.
+  // 根据操作数规模计算当前值除以 b 的商和余数
+  // 商覆盖写入 quotient 并返回余数
   mutable_bigint divide(const mutable_bigint& b, mutable_bigint& quotient) {
     return divide(b, quotient, true);
   }
 
-  // 计算当前对象除以 b 的商和余数;根据规模选择 Knuth 或 Burnikel-Ziegler.
+  // 根据操作数规模在 Knuth 与 Burnikel-Ziegler 除法之间选择
+  // 商覆盖写入 quotient,need_remainder 控制 Knuth 路径是否构造余数
   mutable_bigint divide(const mutable_bigint& b, mutable_bigint& quotient, bool need_remainder) {
     if (b.int_len_ < BURNIKEL_ZIEGLER_THRESHOLD || int_len_ - b.int_len_ < BURNIKEL_ZIEGLER_OFFSET) {
       return divide_knuth(b, quotient, need_remainder);
@@ -1375,7 +1480,8 @@ struct mutable_bigint {
     return divide_and_remainder_burnikel_ziegler(b, quotient);
   }
 
-  // 用一个正 64-bit divisor 除当前对象,商写入 quotient,返回余数.
+  // 将当前值除以非零无符号 64 位 v
+  // 商覆盖写入 quotient,返回小于 v 的无符号余数,v == 0 时抛出 std::runtime_error
   std::uint64_t divide(std::uint64_t v, mutable_bigint& quotient) {
     if (v == 0) {
       throw std::runtime_error("divide by zero");
@@ -1395,9 +1501,44 @@ struct mutable_bigint {
     return divide_long_magnitude(v, quotient).to_long();
   }
 
-  // 用正 64-bit divisor 除当前对象,商写入 quotient,返回余数对象.
+  // 将当前值除以非零无符号 64 位 v,复用 quotient 和 remainder 工作区
+  // 返回余数的 std::uint64_t 值,v == 0 时抛出 std::runtime_error
+  std::uint64_t divide(std::uint64_t v, mutable_bigint& quotient, mutable_bigint& remainder) {
+    if (v == 0) {
+      throw std::runtime_error("divide by zero");
+    }
+
+    if (int_len_ == 0) {
+      quotient.int_len_ = 0;
+      quotient.offset_ = 0;
+      remainder.reset();
+      return 0;
+    }
+
+    const std::uint32_t high = static_cast<std::uint32_t>((v >> 32));
+    quotient.clear();
+    if (high == 0) {
+      remainder.reset();
+      return divide_one_word(static_cast<std::uint32_t>(v), quotient) & 0xffffffffULL;
+    }
+    divide_long_magnitude(v, quotient, remainder);
+    return remainder.to_long();
+  }
+
+  // 使用双 limb 长除法将当前值除以非零 ldivisor
+  // 商覆盖写入 quotient,并以 mutable_bigint 返回余数
   mutable_bigint divide_long_magnitude(std::uint64_t ldivisor, mutable_bigint& quotient) {
-    mutable_bigint rem(jarray<std::uint32_t>(int_len_ + 1));
+    mutable_bigint rem;
+    divide_long_magnitude(ldivisor, quotient, rem);
+    return rem;
+  }
+
+  // 使用双 limb 长除法将当前值除以非零 ldivisor
+  // 商和余数分别覆盖写入 quotient 与 rem,两个结果对象的容量可被复用
+  void divide_long_magnitude(std::uint64_t ldivisor, mutable_bigint& quotient, mutable_bigint& rem) {
+    if (rem.value_.length() < int_len_ + 1) {
+      rem.value_.alloc(int_len_ + 1);
+    }
     jarray_copy(value_, offset_, rem.value_, 1, int_len_);
     rem.int_len_ = int_len_;
     rem.offset_ = 1;
@@ -1490,10 +1631,10 @@ struct mutable_bigint {
 
     quotient.normalize();
     rem.normalize();
-    return rem;
   }
 
-  // 返回当前对象的整数平方根.
+  // 返回当前非负 magnitude 的整数平方根
+  // 结果是满足 s * s <= this 的最大整数 s,等价于 floor(sqrt(this))
   mutable_bigint sqrt() {
     if (is_zero()) {
       return mutable_bigint(0);
@@ -1512,7 +1653,7 @@ struct mutable_bigint {
           jarray<std::uint32_t> result(2);
           result[0] = static_cast<std::uint32_t>((xk >> 32));
           result[1] = static_cast<std::uint32_t>((xk & 0xffffffffULL));
-          mutable_bigint out(result);
+          mutable_bigint out(std::move(result));
           out.normalize();
           return out;
         }
@@ -1520,6 +1661,9 @@ struct mutable_bigint {
       }
     }
 
+    if ((bits + 1) / 2 > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+      throw std::runtime_error("bit length overflow");
+    }
     mutable_bigint xk(1);
     xk.left_shift(static_cast<std::int32_t>(((bits + 1) / 2)));
 
@@ -1538,7 +1682,8 @@ struct mutable_bigint {
     }
   }
 
-  // 将 a 和 b 作为无符号 32-bit 整数计算 GCD.
+  // 使用二进制 GCD 算法返回两个无符号 32 位数 a 和 b 的最大公约数
+  // 任一参数为零时返回另一参数,两者均为零时返回零
   static std::uint32_t binary_gcd(std::uint32_t a, std::uint32_t b) {
     if (b == 0) {
       return a;
@@ -1566,7 +1711,8 @@ struct mutable_bigint {
     return a << t;
   }
 
-  // 使用二进制 GCD 算法计算当前对象和 v 的 GCD.
+  // 使用二进制 GCD 算法返回 gcd(this, v)
+  // 计算在局部副本上进行,当前对象和 v 保持不变
   mutable_bigint binary_gcd(mutable_bigint& v) {
     mutable_bigint u(*this);
     mutable_bigint vv(v);
@@ -1587,11 +1733,7 @@ struct mutable_bigint {
     std::int32_t lb = 0;
     while ((lb = t->get_lowest_set_bit()) >= 0) {
       t->right_shift(lb);
-      if (tsign > 0) {
-        u = *t;
-      } else {
-        vv = *t;
-      }
+      assert((tsign > 0 && t == &u) || (tsign < 0 && t == &vv));
 
       if (u.int_len_ < 2 && vv.int_len_ < 2) {
         const std::uint32_t x = binary_gcd(u.value_[u.offset_], vv.value_[vv.offset_]);
@@ -1617,10 +1759,11 @@ struct mutable_bigint {
     return u;
   }
 
-  // 先用欧几里得算法缩小规模,再切换到二进制 GCD.
+  // 返回 gcd(this, b),先用欧几里得除法缩小长度差较大的操作数
+  // 两个操作数长度接近后切换到二进制 GCD,当前对象保持不变
   mutable_bigint hybrid_gcd(mutable_bigint b) {
     mutable_bigint a(*this);
-    mutable_bigint q;
+    mutable_bigint q(jarray<std::uint32_t>{});
 
     while (b.int_len_ != 0) {
       const std::int32_t diff = a.int_len_ > b.int_len_ ? a.int_len_ - b.int_len_ : b.int_len_ - a.int_len_;
@@ -1629,13 +1772,14 @@ struct mutable_bigint {
       }
 
       mutable_bigint r = a.divide(b, q);
-      a = b;
-      b = r;
+      a = std::move(b);
+      b = std::move(r);
     }
     return a;
   }
 
-  // 返回 val 在 mod 2^32 下的乘法逆元,要求 val 为奇数.
+  // 返回奇数 val 在模 2^32 下的乘法逆元
+  // 使用 Newton 迭代逐步加倍正确 bit 数,调用方必须保证 val 为奇数
   static std::uint32_t inverse_mod32(std::uint32_t val) {
     std::uint32_t t = val;
     t *= 2 - val * t;
@@ -1645,7 +1789,8 @@ struct mutable_bigint {
     return t;
   }
 
-  // 返回 val 在 mod 2^64 下的乘法逆元,要求 val 为奇数.
+  // 返回奇数 val 在模 2^64 下的乘法逆元
+  // 使用 Newton 迭代逐步加倍正确 bit 数,调用方必须保证 val 为奇数
   static std::uint64_t inverse_mod64(std::uint64_t val) {
     std::uint64_t t = val;
     t *= 2 - val * t;
@@ -1656,7 +1801,8 @@ struct mutable_bigint {
     return t;
   }
 
-  // Fixup 算法:计算 c * 2^(-k) mod p,要求 c < p 且 p 为奇数.
+  // 使用 Fixup 算法返回 c * 2^(-k) mod p
+  // 调用方必须保证 c < p、p 为奇数且 k 非负,输入按值传递并可作为工作区修改
   static mutable_bigint fixup(mutable_bigint c, mutable_bigint p, std::int32_t k) {
     mutable_bigint temp;
     const std::uint32_t r = static_cast<std::uint32_t>((0U - inverse_mod32(p.value_[p.offset_ + p.int_len_ - 1])));
@@ -1685,12 +1831,14 @@ struct mutable_bigint {
     return c;
   }
 
-  // 计算 2^k 在 mod 下的乘法逆元,mod 必须为奇数.
+  // 返回 2^k 在奇数模 mod 下的乘法逆元
+  // 等价于 fixup(1, mod, k)
   static mutable_bigint mod_inverse_bp2(const mutable_bigint& mod, std::int32_t k) {
     return fixup(mutable_bigint(1), mutable_bigint(mod), k);
   }
 
-  // 使用扩展欧几里得算法计算当前对象在 mod 2^k 下的逆元.
+  // 使用扩展欧几里得算法返回当前值在模 2^k 下的乘法逆元
+  // 逆元不存在时抛出 std::runtime_error
   mutable_bigint euclid_mod_inverse(std::int32_t k) {
     mutable_bigint b(1);
     b.left_shift(k);
@@ -1700,9 +1848,7 @@ struct mutable_bigint {
     mutable_bigint q;
     mutable_bigint r = b.divide(a, q);
 
-    mutable_bigint swapper = b;
-    b = r;
-    r = swapper;
+    std::swap(b, r);
 
     mutable_bigint t1(q);
     mutable_bigint t0(1);
@@ -1714,17 +1860,14 @@ struct mutable_bigint {
         throw std::runtime_error("not invertible");
       }
 
-      swapper = r;
-      a = swapper;
+      a = std::move(r);
 
       if (q.int_len_ == 1) {
         t1.mul(q.value_[q.offset_], temp);
       } else {
         q.multiply(t1, temp);
       }
-      swapper = q;
-      q = temp;
-      temp = swapper;
+      std::swap(q, temp);
       t0.add(q);
 
       if (a.is_one()) {
@@ -1736,17 +1879,14 @@ struct mutable_bigint {
         throw std::runtime_error("not invertible");
       }
 
-      swapper = b;
-      b = r;
+      b = std::move(r);
 
       if (q.int_len_ == 1) {
         t0.mul(q.value_[q.offset_], temp);
       } else {
         q.multiply(t0, temp);
       }
-      swapper = q;
-      q = temp;
-      temp = swapper;
+      std::swap(q, temp);
 
       t1.add(q);
     }
@@ -1754,7 +1894,8 @@ struct mutable_bigint {
     return mod;
   }
 
-  // 计算当前对象在 mod 2^k 下的乘法逆元.
+  // 返回当前奇数在模 2^k 下的乘法逆元
+  // 当前值为偶数时抛出 std::runtime_error,k > 64 时使用扩展欧几里得算法
   mutable_bigint mod_inverse_mp2(std::int32_t k) {
     if (is_even()) {
       throw std::runtime_error("non-invertible (gcd != 1)");
@@ -1782,29 +1923,34 @@ struct mutable_bigint {
     jarray<std::uint32_t> result(2);
     result[0] = static_cast<std::uint32_t>((t_long >> 32));
     result[1] = static_cast<std::uint32_t>(t_long);
-    mutable_bigint out(result);
+    mutable_bigint out(std::move(result));
     out.int_len_ = 2;
     out.normalize();
     return out;
   }
 
-  // 返回当前对象 mod p 的乘法逆元.
+  // 返回当前值在正模 p 下的乘法逆元
+  // p 可以为奇数或偶数,当前值与 p 不互素时抛出 std::runtime_error
   mutable_bigint mutable_mod_inverse(const mutable_bigint& p);
 
-  // Schroeppel 几乎逆算法,mod 必须为奇数.
+  // 使用 Schroeppel 几乎逆算法返回当前值在奇数模 mod 下的乘法逆元
+  // 当前值与 mod 不互素时抛出 std::runtime_error
   mutable_bigint mod_inverse(const mutable_bigint& mod);
 
-  // 返回有效数值中指定下标的 limb.
+  // 返回有效区间内从最高位开始编号的第 index 个 limb
+  // 调用方负责保证 index 位于 [0, int_len_)
   std::uint32_t get_int(std::int32_t index) const {
     return value_[offset_ + index];
   }
 
-  // 返回有效数值中指定下标的 limb,并按无符号值扩展为 std::uint64_t.
+  // 返回有效区间内从最高位开始编号的第 index 个 limb 的无符号 64 位值
+  // 调用方负责保证 index 位于 [0, int_len_)
   std::uint64_t get_long(std::int32_t index) const {
     return value_[offset_ + index] & 0xffffffffULL;
   }
 
-  // 若 value_ 数组无法容纳 len 个 limb,则扩容为 len 个 limb.
+  // 确保底层数组至少包含 len 个 limb
+  // 发生扩容时分配零数组,并把完整数组设为当前有效区间
   void ensure_capacity(std::int32_t len) {
     if (value_.length() < len) {
       value_.alloc(len);
@@ -1813,21 +1959,22 @@ struct mutable_bigint {
     }
   }
 
-  // 内部辅助方法,返回数值数组.调用方不应修改返回的数组.
-  // 转换成 bigint 时,使对象变成规范紧凑形态
-  jarray<std::uint32_t> get_magnitude_array() {
+  // 将有效区间压缩为 offset_ == 0 且 value_.length() == int_len_ 的独立数组
+  // 必要时替换底层存储,随后返回规范 magnitude 的只读引用
+  const jarray<std::uint32_t>& get_magnitude_array() {
     if (offset_ > 0 || value_.length() != int_len_) {
       // 缩减 value 使其恰好等于有效数值
       jarray<std::uint32_t> tmp = value_.copy_of_range(offset_, offset_ + int_len_);
       value_.fill(0);
       offset_ = 0;
       int_len_ = tmp.length();
-      value_ = tmp;
+      value_ = std::move(tmp);
     }
     return value_;
   }
 
-  // 返回最低 set bit 的 bit 下标;如果数值为 0,则返回 -1.
+  // 返回当前 magnitude 最低 1 bit 的下标,即其右侧连续零 bit 的数量
+  // 最低有效 bit 的下标为 0,当前值为零时返回 -1
   std::int32_t get_lowest_set_bit() const {
     if (int_len_ == 0) {
       return -1;
@@ -1846,7 +1993,8 @@ struct mutable_bigint {
     return ((int_len_ - 1 - j) << 5) + number_of_trailing_zeros(b);
   }
 
-  // 将当前对象转换为 std::uint64_t.调用方必须保证当前数不超过 std::uint64_t 范围.
+  // 将不超过两个 limb 的当前 magnitude 精确转换为 std::uint64_t
+  // int_len_ > 2 时通过 assert 拒绝
   std::uint64_t to_long() const {
     assert(int_len_ <= 2);
     if (int_len_ == 0) {
@@ -1856,7 +2004,8 @@ struct mutable_bigint {
     return int_len_ == 2 ? (d << 32) | (value_[offset_ + 1] & 0xffffffffULL) : d;
   }
 
-  // 将当前数右移 n bit(n < 32).假定 int_len_ > 0, n > 0.
+  // 将当前非零 magnitude 原地右移 n bit
+  // 调用方必须保证 0 < n < 32,函数不调整 int_len_ 或移除前导零
   void primitive_right_shift(std::int32_t n) {
     assert(int_len_ > 0);
     assert(n > 0 && n < 32);
@@ -1871,7 +2020,8 @@ struct mutable_bigint {
     value_[offset_] >>= n;
   }
 
-  // 将当前数左移 n bit(n < 32).假定 int_len_ > 0, n > 0.
+  // 将当前非零 magnitude 原地左移 n bit
+  // 调用方必须保证 0 < n < 32 且无需增加最高 limb,函数不调整 int_len_
   void primitive_left_shift(std::int32_t n) {
     assert(int_len_ > 0);
     assert(n > 0 && n < 32);
@@ -1887,8 +2037,8 @@ struct mutable_bigint {
     value_[offset_ + int_len_ - 1] <<= n;
   }
 
-  // 用较大的数减去较小的数,并把结果写回较大的那个操作数.
-  // 如果结果写回当前对象,返回 1;如果结果写回 b,返回 -1;如果相等,返回 0.
+  // 比较 this 与 b,并将 abs(this - b) 原地写回 magnitude 较大的那个对象
+  // 返回修改前 this 与 b 的比较结果,相等时返回 0 且不修改任一对象
   std::int32_t difference(mutable_bigint& b) {
     mutable_bigint* a = this;
     mutable_bigint* subtrahend = &b;
@@ -1926,9 +2076,8 @@ struct mutable_bigint {
     return sign;
   }
 
-  // 比较两个数的绝对值大小.
-  // 返回 -1、0 或 1,分别表示当前数小于、等于或大于 b.
-  // value_ 为 std::uint32_t,std::uint32_t 即为无符号 limb.
+  // 比较两个规范非负 magnitude
+  // 当前值小于、等于或大于 b 时分别返回 -1、0 或 1
   std::int32_t compare(const mutable_bigint& b) const {
     if (int_len_ < b.int_len_) {
       return -1;
@@ -1948,7 +2097,8 @@ struct mutable_bigint {
     return 0;
   }
 
-  // 等价于 b.left_shift(32*ints) 后 compare(b),但不修改 b 的值.
+  // 比较当前值与 b * 2^(32 * ints),不构造移位后的临时对象
+  // 当前值较小、相等或较大时分别返回 -1、0 或 1
   std::int32_t compare_shifted(const mutable_bigint& b, std::int32_t ints) const {
     const std::int32_t blen = b.int_len_;
     const std::int32_t alen = int_len_ - ints;
@@ -1970,8 +2120,8 @@ struct mutable_bigint {
     return 0;
   }
 
-  // 将当前数与 b 的一半比较(余数判断需要).
-  // 假定没有前导零,这对 divide() 的结果成立.
+  // 比较当前值与精确值 b / 2,不修改 b
+  // 两个操作数必须规范化,返回 -1、0 或 1 表示比较结果
   std::int32_t compare_half(const mutable_bigint& b) const {
     const std::int32_t blen = b.int_len_;
     const std::int32_t len = int_len_;
@@ -2009,7 +2159,7 @@ struct mutable_bigint {
     return carry == 0 ? 0 : -1;
   }
 
-  // 返回当前绝对值的 bit 长度.
+  // 返回当前非负 magnitude 的有效 bit 长度,零值返回 0
   std::uint64_t bit_length() const {
     if (int_len_ == 0) {
       return 0;
@@ -2017,8 +2167,8 @@ struct mutable_bigint {
     return static_cast<std::uint64_t>((int_len_)) * 32 - number_of_leading_zeros(value_[offset_]);
   }
 
-  // 将当前数右移 n bit,结果保持规范形式.
-  // 类似 safe_right_shift,但 n 不能超过当前数的 bit 长度.
+  // 将当前非负 magnitude 原地右移 n bit
+  // 调用方必须保证 0 <= n < bit_length(),函数通过调整有效区间避免不必要的分配
   void right_shift(std::int32_t n) {
     if (int_len_ == 0) {
       return;
@@ -2040,9 +2190,8 @@ struct mutable_bigint {
     }
   }
 
-  // 将当前数左移 n bit.
-  // 如果 value_ 中已有足够的存储空间则会优先复用.使用 value_ 数组右侧的空间
-  // 比左侧更快,因此在可能的情况下会优先从右侧扩展.
+  // 将当前非负 magnitude 原地左移非负的 n bit
+  // 优先在当前 offset_ 前后或现有容量内移动有效区间,容量不足时才重新分配
   void left_shift(std::int32_t n) {
     if (int_len_ == 0) {
       return;
@@ -2069,7 +2218,7 @@ struct mutable_bigint {
       for (std::int32_t i = 0; i < int_len_; ++i) {
         result[i] = value_[offset_ + i];
       }
-      set_value(result, new_len);
+      set_value(std::move(result), new_len);
     } else if (value_.length() - offset_ >= new_len) {
       value_.fill(offset_ + int_len_, offset_ + new_len, 0);
     } else {
@@ -2091,8 +2240,8 @@ struct mutable_bigint {
     }
   }
 
-  // 与 right_shift 类似,但允许 n 大于当前数的 bit 长度.
-  // 如果右移覆盖了整个数,则直接重置为 0.
+  // 安全地将当前值原地右移非负的 n bit
+  // n 覆盖全部有效 limb 时重置为零,否则调用 right_shift()
   void safe_right_shift(std::int32_t n) {
     if (n / 32 >= int_len_) {
       reset();
@@ -2101,23 +2250,28 @@ struct mutable_bigint {
     }
   }
 
-  // 与 left_shift 类似,但允许 n 为 0.
+  // 安全地将当前值原地左移 n bit,n <= 0 时保持不变
   void safe_left_shift(std::int32_t n) {
     if (n > 0) {
       left_shift(n);
     }
   }
 
-  // 将 addend 加到当前对象中,结果保存在当前对象.
-  // addend 的内容不会被修改.
+  // 原地计算 this += addend,addend 保持不变
+  // 现有容量足够且不存在别名冲突时复用 value_,否则分配结果数组
   void add(const mutable_bigint& addend) {
     std::int32_t x = int_len_;
     std::int32_t y = addend.int_len_;
     std::int32_t result_len = std::max(int_len_, addend.int_len_);
     const bool result_is_value = value_.length() >= result_len;
-    jarray<std::uint32_t> result = result_is_value ? value_ : jarray<std::uint32_t>(result_len);
+    jarray<std::uint32_t> local_result;
+    jarray<std::uint32_t>* result = &value_;
+    if (!result_is_value) {
+      local_result = jarray<std::uint32_t>(result_len);
+      result = &local_result;
+    }
 
-    std::int32_t rstart = result.length() - 1;
+    std::int32_t rstart = result->length() - 1;
     std::uint64_t sum = 0;
     std::uint64_t carry = 0;
 
@@ -2125,47 +2279,49 @@ struct mutable_bigint {
       --x;
       --y;
       sum = (value_[x + offset_] & 0xffffffffULL) + (addend.value_[y + addend.offset_] & 0xffffffffULL) + carry;
-      result[rstart--] = static_cast<std::uint32_t>((sum));
+      (*result)[rstart--] = static_cast<std::uint32_t>((sum));
       carry = sum >> 32;
     }
 
     while (x > 0) {
       --x;
       if (carry == 0 && result_is_value && rstart == x + offset_) {
-        value_ = result;
         return;
       }
       sum = (value_[x + offset_] & 0xffffffffULL) + carry;
-      result[rstart--] = static_cast<std::uint32_t>((sum));
+      (*result)[rstart--] = static_cast<std::uint32_t>((sum));
       carry = sum >> 32;
     }
 
     while (y > 0) {
       --y;
       sum = (addend.value_[y + addend.offset_] & 0xffffffffULL) + carry;
-      result[rstart--] = static_cast<std::uint32_t>((sum));
+      (*result)[rstart--] = static_cast<std::uint32_t>((sum));
       carry = sum >> 32;
     }
 
     if (carry > 0) {
       ++result_len;
-      if (result.length() < result_len) {
+      if (result->length() < result_len) {
         jarray<std::uint32_t> temp(result_len);
-        jarray_copy(result, 0, temp, 1, result.length());
+        jarray_copy(*result, 0, temp, 1, result->length());
         temp[0] = 1;
-        result = std::move(temp);
+        local_result = std::move(temp);
+        result = &local_result;
       } else {
-        result[rstart--] = 1;
+        (*result)[rstart--] = 1;
       }
     }
 
-    value_ = std::move(result);
+    if (result != &value_) {
+      value_ = std::move(local_result);
+    }
     int_len_ = result_len;
     offset_ = value_.length() - result_len;
   }
 
-  // 将 addend 左移 32*n bit 后加到当前对象中,结果保存在当前对象.
-  // 等价于先执行 addend.left_shift(32*n) 再 add(addend),但不修改 addend.
+  // 原地计算 this += addend * 2^(32 * n),addend 保持不变
+  // n 表示在 addend 低位追加的零 limb 数量
   void add_shifted(const mutable_bigint& addend, std::int32_t n) {
     if (addend.is_zero()) {
       return;
@@ -2174,10 +2330,15 @@ struct mutable_bigint {
     std::int32_t x = int_len_;
     std::int32_t y = addend.int_len_ + n;
     std::int32_t result_len = std::max(int_len_, y);
-    const bool result_is_value = value_.length() >= result_len;
-    jarray<std::uint32_t> result = result_is_value ? value_ : jarray<std::uint32_t>(result_len);
+    const bool result_is_value = value_.length() >= result_len && &addend != this;
+    jarray<std::uint32_t> local_result;
+    jarray<std::uint32_t>* result = &value_;
+    if (!result_is_value) {
+      local_result = jarray<std::uint32_t>(result_len);
+      result = &local_result;
+    }
 
-    std::int32_t rstart = result.length() - 1;
+    std::int32_t rstart = result->length() - 1;
     std::uint64_t sum = 0;
     std::uint64_t carry = 0;
 
@@ -2186,18 +2347,17 @@ struct mutable_bigint {
       --y;
       const std::uint32_t bval = y + addend.offset_ < addend.value_.length() ? addend.value_[y + addend.offset_] : 0;
       sum = (value_[x + offset_] & 0xffffffffULL) + (bval & 0xffffffffULL) + carry;
-      result[rstart--] = static_cast<std::uint32_t>((sum));
+      (*result)[rstart--] = static_cast<std::uint32_t>((sum));
       carry = sum >> 32;
     }
 
     while (x > 0) {
       --x;
       if (carry == 0 && result_is_value && rstart == x + offset_) {
-        value_ = result;
         return;
       }
       sum = (value_[x + offset_] & 0xffffffffULL) + carry;
-      result[rstart--] = static_cast<std::uint32_t>((sum));
+      (*result)[rstart--] = static_cast<std::uint32_t>((sum));
       carry = sum >> 32;
     }
 
@@ -2205,29 +2365,32 @@ struct mutable_bigint {
       --y;
       const std::uint32_t bval = y + addend.offset_ < addend.value_.length() ? addend.value_[y + addend.offset_] : 0;
       sum = (bval & 0xffffffffULL) + carry;
-      result[rstart--] = static_cast<std::uint32_t>((sum));
+      (*result)[rstart--] = static_cast<std::uint32_t>((sum));
       carry = sum >> 32;
     }
 
     if (carry > 0) {
       ++result_len;
-      if (result.length() < result_len) {
+      if (result->length() < result_len) {
         jarray<std::uint32_t> temp(result_len);
-        jarray_copy(result, 0, temp, 1, result.length());
+        jarray_copy(*result, 0, temp, 1, result->length());
         temp[0] = 1;
-        result = std::move(temp);
+        local_result = std::move(temp);
+        result = &local_result;
       } else {
-        result[rstart--] = 1;
+        (*result)[rstart--] = 1;
       }
     }
 
-    value_ = std::move(result);
+    if (result != &value_) {
+      value_ = std::move(local_result);
+    }
     int_len_ = result_len;
     offset_ = value_.length() - result_len;
   }
 
-  // 类似 add_shifted(addend, n),但要求当前数的有效长度不大于 n.
-  // 即结果为 addend 放在高位、当前数放在低位,中间空出的 limb 补 0.
+  // 在两个 magnitude 的有效 limb 区间互不重叠时计算 this += addend * 2^(32 * n)
+  // 调用方必须保证 int_len_ <= n,函数直接拼接数组以避免逐 limb 加法
   void add_disjoint(const mutable_bigint& addend, std::int32_t n) {
     assert(int_len_ <= n);
     if (addend.is_zero()) {
@@ -2237,32 +2400,36 @@ struct mutable_bigint {
     std::int32_t x = int_len_;
     std::int32_t y = addend.int_len_ + n;
     const std::int32_t result_len = std::max(int_len_, y);
-    jarray<std::uint32_t> result;
-    if (value_.length() < result_len) {
-      result = jarray<std::uint32_t>(result_len);
+    const bool result_is_value = value_.length() >= result_len && &addend != this;
+    jarray<std::uint32_t> local_result;
+    jarray<std::uint32_t>* result = &value_;
+    if (!result_is_value) {
+      local_result = jarray<std::uint32_t>(result_len);
+      result = &local_result;
     } else {
-      result = value_;
-      result.fill(offset_ + int_len_, result.length(), 0);
+      result->fill(offset_ + int_len_, result->length(), 0);
     }
 
-    std::int32_t rstart = result.length() - 1;
+    std::int32_t rstart = result->length() - 1;
 
-    jarray_copy(value_, offset_, result, rstart + 1 - x, x);
+    jarray_copy(value_, offset_, *result, rstart + 1 - x, x);
     y -= x;
     rstart -= x;
 
     const std::int32_t len = std::min(y, addend.value_.length() - addend.offset_);
-    jarray_copy(addend.value_, addend.offset_, result, rstart + 1 - y, len);
+    jarray_copy(addend.value_, addend.offset_, *result, rstart + 1 - y, len);
 
-    result.fill(rstart + 1 - y + len, rstart + 1, 0);
+    result->fill(rstart + 1 - y + len, rstart + 1, 0);
 
-    value_ = std::move(result);
+    if (result != &value_) {
+      value_ = std::move(local_result);
+    }
     int_len_ = result_len;
     offset_ = value_.length() - result_len;
   }
 
-  // 用较大的数减去较小的数,并把结果保存在当前对象中.
-  // 如果当前对象较大,返回 1;如果 b 较大,返回 -1;如果相等,返回 0.
+  // 将 abs(this - b) 覆盖写回当前对象
+  // 返回修改前 this 与 b 的比较结果,相等时把当前对象重置为零
   std::int32_t subtract(const mutable_bigint& b) {
     const mutable_bigint* a = this;
     const mutable_bigint* subtrahend = &b;
@@ -2277,11 +2444,16 @@ struct mutable_bigint {
     }
 
     const std::int32_t result_len = a->int_len_;
-    jarray<std::uint32_t> result = value_.length() < result_len ? jarray<std::uint32_t>(result_len) : value_;
+    jarray<std::uint32_t> local_result;
+    jarray<std::uint32_t>* result = &value_;
+    if (value_.length() < result_len) {
+      local_result = jarray<std::uint32_t>(result_len);
+      result = &local_result;
+    }
 
     std::int32_t x = a->int_len_;
     std::int32_t y = subtrahend->int_len_;
-    std::int32_t rstart = result.length() - 1;
+    std::int32_t rstart = result->length() - 1;
     std::int32_t borrow = 0;
 
     while (y > 0) {
@@ -2290,25 +2462,28 @@ struct mutable_bigint {
       const std::int64_t diff =
           static_cast<std::int64_t>((a->value_[x + a->offset_] & 0xffffffffULL)) -
           static_cast<std::int64_t>((subtrahend->value_[y + subtrahend->offset_] & 0xffffffffULL)) - borrow;
-      result[rstart--] = static_cast<std::uint32_t>(diff);
+      (*result)[rstart--] = static_cast<std::uint32_t>(diff);
       borrow = diff < 0 ? 1 : 0;
     }
 
     while (x > 0) {
       --x;
       const std::int64_t diff = static_cast<std::int64_t>((a->value_[x + a->offset_] & 0xffffffffULL)) - borrow;
-      result[rstart--] = static_cast<std::uint32_t>(diff);
+      (*result)[rstart--] = static_cast<std::uint32_t>(diff);
       borrow = diff < 0 ? 1 : 0;
     }
 
-    value_ = std::move(result);
+    if (result != &value_) {
+      value_ = std::move(local_result);
+    }
     int_len_ = result_len;
     offset_ = value_.length() - result_len;
     normalize();
     return sign;
   }
 
-  // 将 addend 的低 n 个 limb 加到当前对象中,addend 本身不会被修改.
+  // 原地加上 addend 最低 n 个 limb 组成的规范 magnitude
+  // 通过局部副本裁剪 addend,原对象保持不变
   void add_lower(const mutable_bigint& addend, std::int32_t n) {
     mutable_bigint a(addend);
     if (a.offset_ + a.int_len_ >= n) {
@@ -2319,7 +2494,8 @@ struct mutable_bigint {
     add(a);
   }
 
-  // 将当前对象乘以 32-bit limb y,结果写入 z.
+  // 计算当前 magnitude 与单 limb y 的乘积并覆盖写入 z
+  // y 为 0 时清零 z,y 为 1 时直接复制当前值
   void mul(std::uint32_t y, mutable_bigint& z) const {
     if (y == 1) {
       z.copy_value(*this);
@@ -2332,11 +2508,16 @@ struct mutable_bigint {
     }
 
     const std::uint64_t ylong = y & 0xffffffffULL;
-    jarray<std::uint32_t> zval = z.value_.length() < int_len_ + 1 ? jarray<std::uint32_t>(int_len_ + 1) : z.value_;
+    jarray<std::uint32_t> local_result;
+    jarray<std::uint32_t>* result = &z.value_;
+    if (z.value_.length() < int_len_ + 1) {
+      local_result = jarray<std::uint32_t>(int_len_ + 1);
+      result = &local_result;
+    }
     std::uint64_t carry = 0;
     for (std::int32_t i = int_len_ - 1; i >= 0; --i) {
       const std::uint64_t product = ylong * (value_[i + offset_] & 0xffffffffULL) + carry;
-      zval[i + 1] = static_cast<std::uint32_t>(product);
+      (*result)[i + 1] = static_cast<std::uint32_t>(product);
       carry = product >> 32;
     }
 
@@ -2346,15 +2527,22 @@ struct mutable_bigint {
     } else {
       z.offset_ = 0;
       z.int_len_ = int_len_ + 1;
-      zval[0] = static_cast<std::uint32_t>(carry);
+      (*result)[0] = static_cast<std::uint32_t>(carry);
     }
-    z.value_ = std::move(zval);
+    if (result != &z.value_) {
+      z.value_ = std::move(local_result);
+    }
   }
 
-  // 将当前对象和 y 相乘,结果写入 z;y 本身不会被修改.
+  // 使用 O(n^2) 多 limb 乘法计算当前 magnitude 与 y 的乘积
+  // 结果覆盖写入 z,两个操作数保持不变
   void multiply(const mutable_bigint& y, mutable_bigint& z) const {
     const std::int32_t x_len = int_len_;
     const std::int32_t y_len = y.int_len_;
+    if (x_len == 0 || y_len == 0) {
+      z.clear();
+      return;
+    }
     const std::int32_t new_len = x_len + y_len;
 
     if (z.value_.length() < new_len) {
@@ -2391,29 +2579,32 @@ struct mutable_bigint {
 inline const mutable_bigint mutable_bigint::ONE{1};
 
 // signed_mutable_bigint
-// 带符号的可变多精度整数.
+// 为扩展欧几里得算法提供有符号加减法的可变多精度整数
 //
-// 这个类只在 mutable_bigint 的基础上增加有符号加法和减法;其他运算仍然
-// 按 mutable_bigint 的无符号绝对值逻辑执行
-// 的职责边界.
+// magnitude 的存储、不变量和原地更新语义与 mutable_bigint 相同
+// sign_ 允许取 -1、0 或 1,其中 0 用于有符号运算产生的临时零结果
+// signed_add() 和 signed_subtract() 同时更新 magnitude 与 sign_
+// 继承的其他运算仍把当前对象视为无符号绝对值,不会自动处理 sign_
+//
+// 该类型仅用于模逆元等需要临时有符号中间结果的内部算法
 struct signed_mutable_bigint : mutable_bigint {
-  // 默认构造函数.创建一个容量为 1 个 limb 的空 mutable_bigint,符号为正.
+  // 构造容量为一个 limb 的正零值
   signed_mutable_bigint() : mutable_bigint() {
   }
 
-  // 使用一个 32 位 limb 构造数值,符号为正.
+  // 使用一个无符号 32 位 limb 构造正值
   signed_mutable_bigint(std::uint32_t val) : mutable_bigint(val) {
   }
 
-  // 使用指定 mutable_bigint 的绝对值构造数值,符号为正.
+  // 使用指定 mutable_bigint 的绝对值构造数值,符号为正
   signed_mutable_bigint(const mutable_bigint& val) : mutable_bigint(val) {
   }
 
-  // 显式声明拷贝构造,同时复制符号和有效数值.
+  // 显式声明拷贝构造,同时复制符号和有效数值
   signed_mutable_bigint(const signed_mutable_bigint& val) : mutable_bigint(val), sign_(val.sign_) {
   }
 
-  // 显式声明拷贝赋值,同时复制符号和有效数值.
+  // 显式声明拷贝赋值,同时复制符号和有效数值
   signed_mutable_bigint& operator=(const signed_mutable_bigint& val) {
     if (this == &val) {
       return *this;
@@ -2423,12 +2614,12 @@ struct signed_mutable_bigint : mutable_bigint {
     return *this;
   }
 
-  // 显式声明移动构造,移动后源对象恢复为正零.
+  // 显式声明移动构造,移动后源对象恢复为正零
   signed_mutable_bigint(signed_mutable_bigint&& val) noexcept : mutable_bigint(std::move(val)), sign_(val.sign_) {
     val.sign_ = 1;
   }
 
-  // 显式声明移动赋值,移动后源对象恢复为正零.
+  // 显式声明移动赋值,移动后源对象恢复为正零
   signed_mutable_bigint& operator=(signed_mutable_bigint&& val) noexcept {
     if (this == &val) {
       return *this;
@@ -2439,18 +2630,20 @@ struct signed_mutable_bigint : mutable_bigint {
     return *this;
   }
 
-  // 返回当前符号.1 表示正,-1 表示负,0 表示零结果的临时符号.
+  // 返回当前符号,1 表示正,-1 表示负,0 表示有符号运算产生的临时零结果
   std::int32_t sign() const {
     return sign_;
   }
 
-  // 设置当前符号.只允许 -1、0、1,便于测试和后续算法构造中间状态.
+  // 设置当前符号,仅接受 -1、0 或 1
+  // 0 用于测试和内部算法的临时状态,非法值通过 assert 拒绝
   void set_sign(std::int32_t sign) {
     assert(sign >= -1 && sign <= 1);
     sign_ = sign;
   }
 
-  // 基于无符号 add/subtract 实现有符号加法.
+  // 原地计算 this += addend
+  // 同号时 magnitude 相加,异号时以较大 magnitude 的符号作为结果符号
   void signed_add(const signed_mutable_bigint& addend) {
     if (sign_ == addend.sign_) {
       add(addend);
@@ -2459,7 +2652,8 @@ struct signed_mutable_bigint : mutable_bigint {
     }
   }
 
-  // 基于无符号 add/subtract 实现有符号加法,addend 按正数处理.
+  // 将 addend 作为非负数原地计算 this += addend
+  // 根据当前符号选择 magnitude 加法或减法
   void signed_add(const mutable_bigint& addend) {
     if (sign_ == 1) {
       add(addend);
@@ -2468,7 +2662,8 @@ struct signed_mutable_bigint : mutable_bigint {
     }
   }
 
-  // 基于无符号 add/subtract 实现有符号减法.
+  // 原地计算 this -= addend
+  // 同号时 magnitude 相减,异号时 magnitude 相加并保留当前符号
   void signed_subtract(const signed_mutable_bigint& addend) {
     if (sign_ == addend.sign_) {
       sign_ = sign_ * subtract(addend);
@@ -2477,8 +2672,8 @@ struct signed_mutable_bigint : mutable_bigint {
     }
   }
 
-  // 基于无符号 add/subtract 实现有符号减法,addend 按正数处理.
-  // 若结果为 0, 则把符号恢复为正.
+  // 将 addend 作为非负数原地计算 this -= addend
+  // 结果为零时将 sign_ 恢复为 1
   void signed_subtract(const mutable_bigint& addend) {
     if (sign_ == 1) {
       sign_ = sign_ * subtract(addend);
@@ -2494,6 +2689,9 @@ struct signed_mutable_bigint : mutable_bigint {
 };
 
 // mutable_bigint 类外定义
+// 返回当前值在正模 p 下的乘法逆元,p 为奇数时直接使用几乎逆算法
+// p 为偶数时分别求奇数部分和 2 的幂部分的逆元,再通过中国剩余定理合并
+// 当前值与 p 不互素时抛出 std::runtime_error
 inline mutable_bigint mutable_bigint::mutable_mod_inverse(const mutable_bigint& p) {
   if (p.is_odd()) {
     return mod_inverse(p);
@@ -2533,7 +2731,8 @@ inline mutable_bigint mutable_bigint::mutable_mod_inverse(const mutable_bigint& 
   return result.divide(p, temp1);
 }
 
-// 返回 this^(-1) mod m; 若 this 与 m 不互素 (不存在模逆), 则抛异常.
+// 使用 Schroeppel 几乎逆算法返回当前值在奇数模 mod 下的乘法逆元
+// 当前值与 mod 不互素时抛出 std::runtime_error
 inline mutable_bigint mutable_bigint::mod_inverse(const mutable_bigint& mod) {
   mutable_bigint p(mod);
   mutable_bigint f(*this);
@@ -2583,15 +2782,26 @@ inline mutable_bigint mutable_bigint::mod_inverse(const mutable_bigint& mod) {
     c.signed_add(p);
   }
 
-  return fixup(c, p, k);
+  return fixup(std::move(c), std::move(p), k);
 }
 
 // bigint
-// 不可变的有符号多精度整数
+// 任意精度有符号整数,对外按不可变值对象使用
 //
-// mag_ 使用大端 std::uint32_t limb 保存绝对值,保持规范形式:零必须是
-// signum_ == 0 且 mag_.length() == 0;非零数的 mag_[0] 必须非零.
-// 这个 struct 按当前项目要求保持全公有,内部辅助函数也放在 public 区域.
+// 支持基本算术、最大公约数、模运算、素性测试、素数生成、bit 操作和基数转换
+// 除实现规定的最大 magnitude 外,运算不会像固定宽度整数一样静默溢出
+// 除数为 0 或结果超过支持范围时抛出异常
+//
+// 算术运算采用有符号整数语义,除法的商向零截断,非零余数与被除数同号
+// 移位和按位运算在概念上使用具有无限符号扩展位的二进制补码表示
+// 负移位距离表示向相反方向移位,不存在只适用于固定宽度整数的无符号右移
+// 模运算始终返回 [0, modulus) 范围内的非负结果
+//
+// mag_ 使用大端 std::uint32_t limb 保存绝对值并保持规范形式
+// 零由 signum_ == 0 且 mag_.length() == 0 表示
+// 非零值的 signum_ 为 -1 或 1,且 mag_[0] 非零
+//
+// 这个 struct 按项目约定保持全公有,调用者仍不得直接修改表示字段和缓存字段
 struct bigint {
   static constexpr std::int32_t MIN_RADIX = 2;
   static constexpr std::int32_t MAX_RADIX = 36;
@@ -2608,6 +2818,8 @@ struct bigint {
   static constexpr std::int32_t MONTGOMERY_INTRINSIC_THRESHOLD = 512;
   static constexpr std::int32_t SCHOENHAGE_BASE_CONVERSION_THRESHOLD = 20;
   static constexpr std::int32_t NUM_ZEROS = 63;
+  static constexpr std::uint64_t SMALL_PRIME_PRODUCT_MAGNITUDE =
+      3ULL * 5 * 7 * 11 * 13 * 17 * 19 * 23 * 29 * 31 * 37 * 41;
   static constexpr double LOG_TWO = 0.693147180559945309417232121458176568;
   static constexpr std::array<std::int32_t, 7> bn_exp_mod_thresh_table = {
       7, 25, 81, 241, 673, 1793, std::numeric_limits<std::int32_t>::max()};
@@ -2644,12 +2856,13 @@ struct bigint {
   mutable std::int32_t lowest_set_bit_plus_two_{0};
   mutable std::int32_t first_nonzero_int_num_plus_two_{0};
 
-  // 创建 bigint 常量 0.
+  // 构造数值为 0 的 bigint
   bigint() = default;
 
-  // 使用已规范化的 sign-magnitude limb 数组构造内部值.
+  // 使用 sign-magnitude 表示构造 bigint,并移除 magnitude 的前导零 limb
+  // signum 必须为 -1、0 或 1,非零 magnitude 不能与 signum == 0 同时出现
   bigint(std::int32_t signum, jarray<std::uint32_t> magnitude)
-      : signum_(signum), mag_(trusted_strip_leading_zero_limbs(magnitude)) {
+      : signum_(signum), mag_(trusted_strip_leading_zero_limbs(std::move(magnitude))) {
     if (signum < -1 || signum > 1) {
       throw std::invalid_argument("invalid signum value");
     }
@@ -2663,7 +2876,8 @@ struct bigint {
     }
   }
 
-  // 从大端二进制补码 limb 数组构造
+  // 将大端二进制补码 limb 数组解释为有符号整数
+  // val[0] 是最高有效 limb,空数组表示 0
   bigint(const jarray<std::uint32_t>& val) {
     if (val.length() == 0) {
       signum_ = 0;
@@ -2681,7 +2895,33 @@ struct bigint {
     }
   }
 
-  // 将 std::int64_t 转换为 bigint
+  // 接管大端二进制补码 limb 临时数组并解释为有符号整数
+  // val[0] 是最高有效 limb,空数组表示 0
+  bigint(jarray<std::uint32_t>&& val) {
+    if (val.length() == 0) {
+      signum_ = 0;
+      return;
+    }
+    if ((val[0] & 0x80000000U) != 0) {
+      std::uint64_t carry = 1;
+      for (std::int32_t i = val.length() - 1; i >= 0; --i) {
+        const std::uint64_t sum = static_cast<std::uint64_t>(~val[i]) + carry;
+        val[i] = static_cast<std::uint32_t>(sum);
+        carry = sum >> 32;
+      }
+      mag_ = trusted_strip_leading_zero_limbs(std::move(val));
+      signum_ = -1;
+    } else {
+      mag_ = trusted_strip_leading_zero_limbs(std::move(val));
+      signum_ = mag_.length() == 0 ? 0 : 1;
+    }
+    if (mag_.length() >= MAX_MAG_LENGTH) {
+      check_range();
+    }
+  }
+
+  // 构造与 val 数值相等的 bigint
+  // std::int64_t 的全部取值均可精确表示,包括最小负数
   bigint(std::int64_t val) {
     if (val == 0) {
       signum_ = 0;
@@ -2708,7 +2948,9 @@ struct bigint {
     }
   }
 
-  // 将大端二进制补码 byte 子数组转换为 bigint.
+  // 将 val[off, off + len) 解释为大端二进制补码整数
+  // val[off] 是最高有效 byte,len == 0 时构造 0
+  // val 本身为空或指定区间越界时抛出异常
   bigint(const jarray<std::uint8_t>& val, std::int32_t off, std::int32_t len) {
     if (val.length() == 0) {
       throw std::invalid_argument("zero length bigint");
@@ -2732,11 +2974,14 @@ struct bigint {
     }
   }
 
-  // 将完整大端二进制补码 byte 数组转换为 bigint.
+  // 将完整 byte 数组解释为大端二进制补码整数
+  // val[0] 是最高有效 byte,空数组无有效整数表示并会抛出 std::invalid_argument
   bigint(const jarray<std::uint8_t>& val) : bigint(val, 0, val.length()) {
   }
 
-  // 将 sign-magnitude byte 子数组转换为 bigint.
+  // 将 signum 和 magnitude[off, off + len) 组成的 sign-magnitude 表示转换为 bigint
+  // magnitude 使用大端 byte 顺序,零长度或全零 magnitude 始终构造 0
+  // signum 非法、signum == 0 与非零 magnitude 不匹配或区间越界时抛出异常
   bigint(std::int32_t signum, const jarray<std::uint8_t>& magnitude, std::int32_t off, std::int32_t len) {
     if (signum < -1 || signum > 1) {
       throw std::invalid_argument("invalid signum value");
@@ -2756,12 +3001,13 @@ struct bigint {
     }
   }
 
-  // 将完整 sign-magnitude byte 数组转换为 bigint.
+  // 将 signum 和完整大端 magnitude byte 数组组成的 sign-magnitude 表示转换为 bigint
   bigint(std::int32_t signum, const jarray<std::uint8_t>& magnitude)
       : bigint(signum, magnitude, 0, magnitude.length()) {
   }
 
-  // 内部 sign-magnitude byte 构造
+  // 内部 sign-magnitude byte 构造入口,magnitude 使用大端顺序
+  // 调用方负责保证 signum 与非零 magnitude 一致
   bigint(const jarray<std::uint8_t>& magnitude, std::int32_t signum) {
     signum_ = magnitude.length() == 0 ? 0 : signum;
     mag_ = strip_leading_zero_bytes(magnitude, 0, magnitude.length());
@@ -2770,31 +3016,33 @@ struct bigint {
     }
   }
 
-  // 生成 [0, 2^numBits) 的非负随机 bigint
+  // 使用 rnd 生成均匀分布在 [0, 2^num_bits) 的非负随机 bigint
+  // num_bits 必须非负,为 0 时结果为 0
   bigint(std::int32_t num_bits, std::mt19937_64& rnd) {
-    jarray<std::uint8_t> magnitude = random_bits(num_bits, rnd);
-    mag_ = strip_leading_zero_bytes(magnitude, 0, magnitude.length());
+    mag_ = random_magnitude(num_bits, rnd);
     signum_ = mag_.length() == 0 ? 0 : 1;
     if (mag_.length() >= MAX_MAG_LENGTH) {
       check_range();
     }
-    magnitude.fill(0);
   }
 
-  // 随机生成指定 bitLength 的 probable prime
+  // 使用 rnd 随机生成 bit_length 恰好等于指定值的正 probable prime
+  // certainty 控制可接受的误判概率和测试时间,bit_length < 2 时抛出 std::runtime_error
   bigint(std::int32_t bit_length, std::int32_t certainty, std::mt19937_64& rnd) {
     if (bit_length < 2) {
       throw std::runtime_error("bit length < 2");
     }
     // 随机生成指定 bitLength 的 probable prime; 主要用于较小位数,位数较大时性能下降;
-    // 前提 bitLength > 1.
+    // 前提 bitLength > 1
     const bigint prime = bit_length < SMALL_PRIME_THRESHOLD ? small_prime(bit_length, certainty, rnd)
                                                             : large_prime(bit_length, certainty, rnd);
     signum_ = 1;
     mag_ = prime.mag_;
   }
 
-  // 将指定 radix 的字符串转换为 bigint.
+  // 将 val 按 radix 解析为 bigint
+  // 格式为可选的单个前导正负号,后跟一个或多个 radix 进制数字,不接受空白或其他字符
+  // radix 必须位于 [MIN_RADIX, MAX_RADIX],字符串为空或格式非法时抛出 std::invalid_argument
   bigint(const std::string& val, std::int32_t radix) {
     std::int32_t cursor = 0;
     const std::int32_t len = static_cast<std::int32_t>((val.size()));
@@ -2856,17 +3104,18 @@ struct bigint {
       destructive_mul_add(magnitude, super_radix, group_val);
     }
 
-    mag_ = trusted_strip_leading_zero_limbs(magnitude);
+    mag_ = trusted_strip_leading_zero_limbs(std::move(magnitude));
     if (mag_.length() >= MAX_MAG_LENGTH) {
       check_range();
     }
   }
 
-  // 将十进制字符串转换为 bigint.
+  // 将十进制字符串解析为 bigint,接受可选的单个前导正负号
   bigint(const std::string& val) : bigint(val, 10) {
   }
 
-  // 使用预先解析出的符号构造十进制 bigint
+  // 使用调用方预先解析的 sign 和字符长度 len 构造十进制 bigint
+  // 仅供 decimal 解析路径使用,调用方负责保证字符均为十进制数字且参数一致
   bigint(const std::string& val, std::int32_t sign, std::int32_t len) {
     std::int32_t cursor = 0;
     while (cursor < len && digit(val[static_cast<size_t>((cursor))], 10) == 0) {
@@ -2904,13 +3153,13 @@ struct bigint {
       cursor += digits_per_int[10];
       destructive_mul_add(magnitude, int_radix[10], group_val);
     }
-    mag_ = trusted_strip_leading_zero_limbs(magnitude);
+    mag_ = trusted_strip_leading_zero_limbs(std::move(magnitude));
     if (mag_.length() >= MAX_MAG_LENGTH) {
       check_range();
     }
   }
 
-  // 返回等于指定 std::int64_t 的 bigint
+  // 返回与 val 数值相等的 bigint,小整数优先复用预构造常量
   static bigint value_of(std::int64_t val) {
     if (val == 0) {
       return ZERO;
@@ -2924,13 +3173,13 @@ struct bigint {
     return bigint(val);
   }
 
-  // 正小整数缓存入口
+  // 返回缓存中的正小整数 n,调用方必须保证 n 位于 [1, MAX_CONSTANT]
   static bigint pos_const(std::int32_t n);
 
-  // 负小整数缓存入口
+  // 返回缓存中的负小整数 -n,调用方必须保证 n 位于 [1, MAX_CONSTANT]
   static bigint neg_const(std::int32_t n);
 
-  // 从大端二进制补码 limb 数组创建 bigint.
+  // 将非空大端二进制补码 limb 数组解释为有符号整数并复制输入
   static bigint value_of(const jarray<std::uint32_t>& val) {
     if (val.length() == 0) {
       throw std::invalid_argument("zero length bigint");
@@ -2938,7 +3187,20 @@ struct bigint {
     return (val[0] & 0x80000000U) == 0 ? bigint(1, val.clone()) : from_twos_complement(val);
   }
 
-  // 从大端二进制补码 limb 数组转换为 bigint.
+  // 将非空大端二进制补码临时数组解释为有符号整数
+  // 正数路径接管数组存储,负数路径转换为绝对值 magnitude
+  static bigint value_of(jarray<std::uint32_t>&& val) {
+    if (val.length() == 0) {
+      throw std::invalid_argument("zero length bigint");
+    }
+    if ((val[0] & 0x80000000U) != 0) {
+      return from_twos_complement(std::move(val));
+    }
+    return bigint(1, trusted_strip_leading_zero_limbs(std::move(val)));
+  }
+
+  // 将非空大端二进制补码 limb 数组转换为规范 bigint
+  // 负数转换为 sign-magnitude,非负数移除前导零 limb
   static bigint from_twos_complement(const jarray<std::uint32_t>& val) {
     if (val.length() == 0) {
       throw std::invalid_argument("zero length bigint");
@@ -2949,27 +3211,36 @@ struct bigint {
     return bigint(1, trusted_strip_leading_zero_limbs(val));
   }
 
-  // 返回符号:-1、0 或 1.
+  // 接管非空大端二进制补码临时数组并转换为规范 bigint
+  static bigint from_twos_complement(jarray<std::uint32_t>&& val) {
+    if (val.length() == 0) {
+      throw std::invalid_argument("zero length bigint");
+    }
+    return bigint(std::move(val));
+  }
+
+  // 返回当前值的符号,负数返回 -1,零返回 0,正数返回 1
   std::int32_t signum() const {
     return signum_;
   }
 
-  // 数值是否为零.
+  // 返回当前值是否等于 0
   bool is_zero() const {
     return signum_ == 0;
   }
 
-  // 数值是否为偶数.
+  // 返回当前值是否为偶数,0 视为偶数
   bool is_even() const {
     return signum_ == 0 || ((mag_[mag_.length() - 1] & 1U) == 0);
   }
 
-  // 数值是否为奇数.
+  // 返回当前值是否为奇数
   bool is_odd() const {
     return signum_ != 0 && ((mag_[mag_.length() - 1] & 1U) != 0);
   }
 
-  // 比较两个 bigint 的数值大小.
+  // 按有符号数值比较当前值与 val
+  // 当前值小于、等于或大于 val 时分别返回 -1、0 或 1
   std::int32_t compare_to(const bigint& val) const {
     if (signum_ == val.signum_) {
       if (signum_ > 0) {
@@ -2983,7 +3254,8 @@ struct bigint {
     return signum_ > val.signum_ ? 1 : -1;
   }
 
-  // 只比较绝对值大小.
+  // 忽略符号并比较当前值与 val 的绝对值
+  // abs(this) 小于、等于或大于 abs(val) 时分别返回 -1、0 或 1
   std::int32_t compare_magnitude(const bigint& val) const {
     const std::int32_t len1 = mag_.length();
     const std::int32_t len2 = val.mag_.length();
@@ -3004,7 +3276,8 @@ struct bigint {
     return 0;
   }
 
-  // 比较绝对值与 std::int64_t 的绝对值大小;调用方不得传入 INT64_MIN.
+  // 比较 abs(this) 与 abs(val),较小、相等或较大时分别返回 -1、0 或 1
+  // 调用方不得传入 std::numeric_limits<std::int64_t>::min()
   std::int32_t compare_magnitude(std::int64_t val) const {
     assert(val != std::numeric_limits<std::int64_t>::min());
     const std::int32_t len = mag_.length();
@@ -3040,55 +3313,18 @@ struct bigint {
     return 0;
   }
 
-  // 判断数值是否相等.
-  bool operator==(const bigint& other) const {
-    if (signum_ != other.signum_ || mag_.length() != other.mag_.length()) {
-      return false;
-    }
-    for (std::int32_t i = 0; i < mag_.length(); ++i) {
-      if (mag_[i] != other.mag_[i]) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  // 判断数值是否不相等.
-  bool operator!=(const bigint& other) const {
-    return !(*this == other);
-  }
-
-  // 判断是否小于 other.
-  bool operator<(const bigint& other) const {
-    return compare_to(other) < 0;
-  }
-
-  // 判断是否大于 other.
-  bool operator>(const bigint& other) const {
-    return compare_to(other) > 0;
-  }
-
-  // 判断是否小于等于 other.
-  bool operator<=(const bigint& other) const {
-    return compare_to(other) <= 0;
-  }
-
-  // 判断是否大于等于 other.
-  bool operator>=(const bigint& other) const {
-    return compare_to(other) >= 0;
-  }
-
-  // 返回两者中的较小值;相等时允许返回任意一方.
+  // 返回当前值与 val 中数值较小的一方,相等时允许返回任意一方
   bigint min(const bigint& val) const {
     return compare_to(val) < 0 ? *this : val;
   }
 
-  // 返回两者中的较大值;相等时允许返回任意一方.
+  // 返回当前值与 val 中数值较大的一方,相等时允许返回任意一方
   bigint max(const bigint& val) const {
     return compare_to(val) > 0 ? *this : val;
   }
 
-  // 返回与标准 bigint hash_code 一致的哈希值.
+  // 返回由 signum_ 和 magnitude 计算的稳定哈希值
+  // 算法与 Java BigInteger.hashCode() 一致
   std::int32_t hash_code() const {
     std::int32_t hash = 0;
     for (std::int32_t i = 0; i < mag_.length(); ++i) {
@@ -3097,22 +3333,17 @@ struct bigint {
     return hash * signum_;
   }
 
-  // 返回绝对值.
+  // 返回 abs(this)
   bigint abs() const {
     return signum_ >= 0 ? *this : negate();
   }
 
-  // 返回相反数.
+  // 返回 -this,0 的相反数仍为 0
   bigint negate() const {
     return bigint(-signum_, mag_.clone());
   }
 
-  // 返回相反数 (一元负号).
-  bigint operator-() const {
-    return negate();
-  }
-
-  // 返回 this + val.
+  // 返回 this + val,不修改任一操作数
   bigint add(const bigint& val) const {
     if (val.signum_ == 0) {
       return *this;
@@ -3130,11 +3361,11 @@ struct bigint {
     }
     jarray<std::uint32_t> result_mag =
         cmp > 0 ? subtract_magnitude(mag_, val.mag_) : subtract_magnitude(val.mag_, mag_);
-    result_mag = trusted_strip_leading_zero_limbs(result_mag);
+    result_mag = trusted_strip_leading_zero_limbs(std::move(result_mag));
     return bigint(cmp == signum_ ? 1 : -1, std::move(result_mag));
   }
 
-  // 返回 this + val,其中 val 是普通 std::int64_t.
+  // 返回 this + val,其中 val 为 std::int64_t,不修改当前值
   bigint add(std::int64_t val) const {
     if (val == 0) {
       return *this;
@@ -3153,16 +3384,11 @@ struct bigint {
       return bigint();
     }
     jarray<std::uint32_t> result_mag = cmp > 0 ? subtract_magnitude(mag_, abs_val) : subtract_magnitude(abs_val, mag_);
-    result_mag = trusted_strip_leading_zero_limbs(result_mag);
+    result_mag = trusted_strip_leading_zero_limbs(std::move(result_mag));
     return bigint(cmp == signum_ ? 1 : -1, std::move(result_mag));
   }
 
-  // 返回 this + val.
-  bigint operator+(const bigint& val) const {
-    return add(val);
-  }
-
-  // 返回 this - val.
+  // 返回 this - val,不修改任一操作数
   bigint subtract(const bigint& val) const {
     if (val.signum_ == 0) {
       return *this;
@@ -3180,21 +3406,17 @@ struct bigint {
     }
     jarray<std::uint32_t> result_mag =
         cmp > 0 ? subtract_magnitude(mag_, val.mag_) : subtract_magnitude(val.mag_, mag_);
-    result_mag = trusted_strip_leading_zero_limbs(result_mag);
+    result_mag = trusted_strip_leading_zero_limbs(std::move(result_mag));
     return bigint(cmp == signum_ ? 1 : -1, std::move(result_mag));
   }
 
-  // 返回 this - val.
-  bigint operator-(const bigint& val) const {
-    return subtract(val);
-  }
-
-  // 返回 this * val.
+  // 返回 this * val,根据操作数规模选择普通、Karatsuba 或 Toom-Cook 乘法
   bigint multiply(const bigint& val) const {
     return multiply(val, false);
   }
 
-  // 返回 this * val;递归调用时跳过部分溢出检查.
+  // multiply() 的递归实现入口
+  // is_recursion 为 true 时跳过仅需在最外层执行的部分范围检查
   bigint multiply(const bigint& val, bool is_recursion) const {
     if (val.signum_ == 0 || signum_ == 0) {
       return ZERO;
@@ -3215,7 +3437,7 @@ struct bigint {
         return multiply_by_int(val.mag_, mag_[0], result_sign);
       }
       jarray<std::uint32_t> result = multiply_to_len(mag_, xlen, val.mag_, ylen, nullptr);
-      result = trusted_strip_leading_zero_limbs(result);
+      result = trusted_strip_leading_zero_limbs(std::move(result));
       return bigint(result_sign, std::move(result));
     }
 
@@ -3233,12 +3455,7 @@ struct bigint {
     return multiply_toom_cook3(*this, val);
   }
 
-  // 返回 this * val.
-  bigint operator*(const bigint& val) const {
-    return multiply(val);
-  }
-
-  // 返回 this * v,其中 v 是普通 std::int64_t.
+  // 返回 this * v,其中 v 为 std::int64_t
   bigint multiply(std::int64_t v) const {
     if (v == 0 || signum_ == 0) {
       return ZERO;
@@ -3276,7 +3493,8 @@ struct bigint {
     return bigint(rsign, std::move(rmag));
   }
 
-  // 返回低 n 个 limb 组成的新 bigint.
+  // 返回 abs(this) 最低 n 个 limb 组成的非负 bigint
+  // n >= mag_.length() 时返回 abs(this),n <= 0 时返回 0
   bigint get_lower(std::int32_t n) const {
     if (n <= 0) {
       return ZERO;
@@ -3288,10 +3506,11 @@ struct bigint {
 
     jarray<std::uint32_t> lower_ints(n);
     jarray_copy(mag_, len - n, lower_ints, 0, n);
-    return bigint(1, trusted_strip_leading_zero_limbs(lower_ints));
+    return bigint(1, trusted_strip_leading_zero_limbs(std::move(lower_ints)));
   }
 
-  // 返回高 mag.length-n 个 limb 组成的新 bigint.
+  // 移除 abs(this) 最低 n 个 limb,返回剩余高位组成的非负 bigint
+  // n 必须非负,n >= mag_.length() 时返回 0
   bigint get_upper(std::int32_t n) const {
     const std::int32_t len = mag_.length();
     if (len <= n) {
@@ -3301,10 +3520,11 @@ struct bigint {
     const std::int32_t upper_len = len - n;
     jarray<std::uint32_t> upper_ints(upper_len);
     jarray_copy(mag_, 0, upper_ints, 0, upper_len);
-    return bigint(1, trusted_strip_leading_zero_limbs(upper_ints));
+    return bigint(1, trusted_strip_leading_zero_limbs(std::move(upper_ints)));
   }
 
-  // 返回 Toom-Cook 使用的切片.
+  // 返回 Toom-Cook 3 路乘法使用的第 slice 个 magnitude 切片
+  // lower_size 和 upper_size 指定低位切片与最高切片的 limb 数
   bigint get_toom_slice(std::int32_t lower_size, std::int32_t upper_size, std::int32_t slice,
                         std::int32_t fullsize) const {
     std::int32_t start = 0;
@@ -3339,10 +3559,11 @@ struct bigint {
 
     jarray<std::uint32_t> int_slice(slice_size);
     jarray_copy(mag_, start, int_slice, 0, slice_size);
-    return bigint(1, trusted_strip_leading_zero_limbs(int_slice));
+    return bigint(1, trusted_strip_leading_zero_limbs(std::move(int_slice)));
   }
 
-  // 精确除以 3;用于 Toom-Cook.
+  // 返回 this / 3,调用方必须保证除法无余数
+  // 仅供 Toom-Cook 插值阶段使用
   bigint exact_divide_by3() const {
     const std::int32_t len = mag_.length();
     jarray<std::uint32_t> result(len);
@@ -3366,11 +3587,12 @@ struct bigint {
         }
       }
     }
-    result = trusted_strip_leading_zero_limbs(result);
+    result = trusted_strip_leading_zero_limbs(std::move(result));
     return bigint(signum_, std::move(result));
   }
 
-  // 返回 this / val.
+  // 返回 this / val,商向零截断
+  // val 为零时抛出 std::runtime_error
   bigint divide(const bigint& val) const {
     if (val.signum_ == 0) {
       throw std::runtime_error("divide by zero");
@@ -3382,7 +3604,8 @@ struct bigint {
     return divide_burnikel_ziegler(val);
   }
 
-  // Knuth O(n^2) 除法
+  // 使用 Knuth O(n^2) 长除法返回 this / val
+  // 调用方负责保证 val 非零
   bigint divide_knuth(const bigint& val) const {
     mutable_bigint q;
     mutable_bigint a(mag_);
@@ -3391,12 +3614,10 @@ struct bigint {
     return from_mutable(std::move(q), signum_ * val.signum_);
   }
 
-  // 返回 this / val (运算符形式).
-  bigint operator/(const bigint& val) const {
-    return divide(val);
-  }
-
-  // 返回 this / val 的商和余数.
+  // 同时计算 this / val 和 this % val
+  // 返回值 first 为向零截断的商,second 为余数
+  // 余数满足 abs(remainder) < abs(val),非零时与 this 同号
+  // val 为零时抛出 std::runtime_error
   std::pair<bigint, bigint> divide_and_remainder(const bigint& val) const {
     if (val.signum_ == 0) {
       throw std::runtime_error("divide by zero");
@@ -3408,7 +3629,8 @@ struct bigint {
     return divide_and_remainder_burnikel_ziegler(val);
   }
 
-  // Knuth 长除法商余
+  // 使用 Knuth 长除法同时计算商和余数
+  // 返回值 first 为商,second 为余数,调用方负责保证 val 非零
   std::pair<bigint, bigint> divide_and_remainder_knuth(const bigint& val) const {
     mutable_bigint q;
     mutable_bigint a(mag_);
@@ -3417,7 +3639,10 @@ struct bigint {
     return {from_mutable(std::move(q), signum_ == val.signum_ ? 1 : -1), from_mutable(std::move(r), signum_)};
   }
 
-  // 返回 this % val.
+  // 返回 this % val
+  // 结果满足 this == (this / val) * val + remainder
+  // 非零结果与 this 同号,因此结果可能为负
+  // val 为零时抛出 std::runtime_error
   bigint remainder(const bigint& val) const {
     if (val.signum_ == 0) {
       throw std::runtime_error("divide by zero");
@@ -3429,7 +3654,7 @@ struct bigint {
     return remainder_burnikel_ziegler(val);
   }
 
-  // Knuth 长除法余数
+  // 使用 Knuth 长除法返回 this % val,调用方负责保证 val 非零
   bigint remainder_knuth(const bigint& val) const {
     mutable_bigint q;
     mutable_bigint a(mag_);
@@ -3438,18 +3663,33 @@ struct bigint {
     return from_mutable(std::move(r), signum_);
   }
 
-  // Burnikel-Ziegler 除法商
+  // 使用 Burnikel-Ziegler 算法返回 this / val
+  // 操作数规模不满足算法阈值时回退到 Knuth 除法
   bigint divide_burnikel_ziegler(const bigint& val) const {
+    if (val.mag_.length() < mutable_bigint::BURNIKEL_ZIEGLER_THRESHOLD ||
+        mag_.length() - val.mag_.length() < mutable_bigint::BURNIKEL_ZIEGLER_OFFSET) {
+      return divide_knuth(val);
+    }
     return divide_and_remainder_burnikel_ziegler(val).first;
   }
 
-  // Burnikel-Ziegler 除法余数
+  // 使用 Burnikel-Ziegler 算法返回 this % val
+  // 操作数规模不满足算法阈值时回退到 Knuth 除法
   bigint remainder_burnikel_ziegler(const bigint& val) const {
+    if (val.mag_.length() < mutable_bigint::BURNIKEL_ZIEGLER_THRESHOLD ||
+        mag_.length() - val.mag_.length() < mutable_bigint::BURNIKEL_ZIEGLER_OFFSET) {
+      return remainder_knuth(val);
+    }
     return divide_and_remainder_burnikel_ziegler(val).second;
   }
 
-  // Burnikel-Ziegler 商余
+  // 使用 Burnikel-Ziegler 算法同时计算 this / val 和 this % val
+  // 返回值 first 为商,second 为余数
   std::pair<bigint, bigint> divide_and_remainder_burnikel_ziegler(const bigint& val) const {
+    if (val.mag_.length() < mutable_bigint::BURNIKEL_ZIEGLER_THRESHOLD ||
+        mag_.length() - val.mag_.length() < mutable_bigint::BURNIKEL_ZIEGLER_OFFSET) {
+      return divide_and_remainder_knuth(val);
+    }
     mutable_bigint q;
     mutable_bigint a(mag_);
     mutable_bigint b(val.mag_);
@@ -3459,12 +3699,8 @@ struct bigint {
     return {q_bigint, r_bigint};
   }
 
-  // 返回 this % val (运算符形式).
-  bigint operator%(const bigint& val) const {
-    return remainder(val);
-  }
-
-  // 返回 |this| mod m;供 BitSieve 构造搜索筛时对应 mutable_bigint.divideOneWord 使用.
+  // 返回 abs(this) 除以单 limb 正整数 m 的余数
+  // 供 bit_sieve 构造搜索筛使用,m 必须非零
   std::uint32_t mod_uint32(std::uint32_t m) const {
     if (m == 0) {
       throw std::runtime_error("divide by zero");
@@ -3476,18 +3712,38 @@ struct bigint {
     return static_cast<std::uint32_t>((rem));
   }
 
-  // 返回 this 的 exponent 次方,exponent 必须非负.
+  // 返回 abs(this) mod SMALL_PRIME_PRODUCT_MAGNITUDE
+  // 用于一次排除可被 3 到 41 之间小素数整除的候选值
+  std::uint64_t mod_small_prime_product() const {
+    std::uint64_t remainder = 0;
+    for (std::int32_t i = 0; i < mag_.length(); ++i) {
+      remainder = ((remainder << 16) | (mag_[i] >> 16)) % SMALL_PRIME_PRODUCT_MAGNITUDE;
+      remainder = ((remainder << 16) | (mag_[i] & 0xffffU)) % SMALL_PRIME_PRODUCT_MAGNITUDE;
+    }
+    return remainder;
+  }
+
+  // 返回 this 的 exponent 次方,其中 exponent 为普通整数
+  // exponent < 0 时抛出 std::runtime_error,0^0 按整数幂约定返回 1
   bigint pow(std::int32_t exponent) const {
     if (exponent < 0) {
       throw std::runtime_error("negative exponent");
     }
+    if (exponent == 0) {
+      return ONE;
+    }
     if (signum_ == 0) {
-      return exponent == 0 ? ONE : *this;
+      return *this;
     }
 
-    bigint part_to_square = abs();
+    bigint part_storage;
+    const bigint* part_to_square = this;
+    if (signum_ < 0) {
+      part_storage = abs();
+      part_to_square = &part_storage;
+    }
 
-    const std::int32_t powers_of_two = part_to_square.get_lowest_set_bit();
+    const std::int32_t powers_of_two = part_to_square->get_lowest_set_bit();
     const std::int64_t bits_to_shift_long = static_cast<std::int64_t>((powers_of_two)) * exponent;
     if (bits_to_shift_long > std::numeric_limits<std::int32_t>::max()) {
       report_overflow();
@@ -3496,8 +3752,9 @@ struct bigint {
 
     std::int32_t remaining_bits = 0;
     if (powers_of_two > 0) {
-      part_to_square = part_to_square.shift_right(powers_of_two);
-      remaining_bits = part_to_square.bit_length();
+      part_storage = part_to_square->shift_right(powers_of_two);
+      part_to_square = &part_storage;
+      remaining_bits = part_to_square->bit_length();
       if (remaining_bits == 1) {
         if (signum_ < 0 && (exponent & 1) == 1) {
           return NEGATIVE_ONE.shift_left(bits_to_shift);
@@ -3505,7 +3762,7 @@ struct bigint {
         return ONE.shift_left(bits_to_shift);
       }
     } else {
-      remaining_bits = part_to_square.bit_length();
+      remaining_bits = part_to_square->bit_length();
       if (remaining_bits == 1) {
         if (signum_ < 0 && (exponent & 1) == 1) {
           return NEGATIVE_ONE;
@@ -3516,10 +3773,10 @@ struct bigint {
 
     const std::int64_t scale_factor = static_cast<std::int64_t>((remaining_bits)) * exponent;
 
-    if (part_to_square.mag_.length() == 1 && scale_factor <= 62) {
+    if (part_to_square->mag_.length() == 1 && scale_factor <= 62) {
       const std::int32_t new_sign = (signum_ < 0 && (exponent & 1) == 1) ? -1 : 1;
       std::int64_t result = 1;
-      std::int64_t base_to_pow2 = part_to_square.mag_[0] & 0xffffffffULL;
+      std::int64_t base_to_pow2 = part_to_square->mag_[0] & 0xffffffffULL;
 
       std::int32_t working_exponent = exponent;
       while (working_exponent != 0) {
@@ -3545,15 +3802,22 @@ struct bigint {
       report_overflow();
     }
 
-    bigint answer = ONE;
+    bigint answer;
+    bool has_answer = false;
     std::int32_t working_exponent = exponent;
     while (working_exponent != 0) {
       if ((working_exponent & 1) == 1) {
-        answer = answer.multiply(part_to_square);
+        if (has_answer) {
+          answer = answer.multiply(*part_to_square);
+        } else {
+          answer = *part_to_square;
+          has_answer = true;
+        }
       }
       working_exponent = static_cast<std::int32_t>((static_cast<std::uint32_t>((working_exponent)) >> 1));
       if (working_exponent != 0) {
-        part_to_square = part_to_square.square();
+        part_storage = part_to_square->square();
+        part_to_square = &part_storage;
       }
     }
     if (powers_of_two > 0) {
@@ -3565,7 +3829,8 @@ struct bigint {
     return answer;
   }
 
-  // 返回非负数的整数平方根.
+  // 返回 this 的整数平方根,即满足 s * s <= this 的最大非负整数 s
+  // 结果等价于 floor(sqrt(this)),this 为负数时抛出 std::runtime_error
   bigint sqrt() const {
     if (signum_ < 0) {
       throw std::runtime_error("negative bigint");
@@ -3575,14 +3840,16 @@ struct bigint {
     return from_mutable(std::move(s), 1);
   }
 
-  // 返回整数平方根和对应余数.
+  // 同时计算 this 的整数平方根 s 和余数 this - s * s
+  // 返回值 first 为 s,second 为余数,this 为负数时抛出 std::runtime_error
   std::pair<bigint, bigint> sqrt_and_remainder() const {
     bigint s = sqrt();
     bigint r = subtract(s.multiply(s));
     return {s, r};
   }
 
-  // 返回 abs(gcd(this, val)).
+  // 返回 gcd(abs(this), abs(val))
+  // this 和 val 同时为 0 时返回 0
   bigint gcd(const bigint& val) const {
     if (val.signum_ == 0) {
       return abs();
@@ -3596,25 +3863,36 @@ struct bigint {
     return from_mutable(std::move(g), 1);
   }
 
-  // 返回 this mod m,m 必须为正.
+  // 返回 this 在正模 m 下的唯一非负余数,结果位于 [0, m)
+  // 与 remainder() 不同,即使 this 为负数,结果也不会为负
+  // m <= 0 时抛出 std::runtime_error
   bigint mod(const bigint& m) const {
     if (m.signum_ <= 0) {
       throw std::runtime_error("modulus not positive");
+    }
+    if (m.mag_.length() == 1) {
+      const std::uint32_t modulus = m.mag_[0];
+      const std::uint32_t remainder = mod_uint32(modulus);
+      if (remainder == 0 || signum_ >= 0) {
+        return value_of(static_cast<std::int64_t>(remainder));
+      }
+      return value_of(static_cast<std::int64_t>(modulus - remainder));
     }
     bigint result = remainder(m);
     return result.signum_ >= 0 ? result : result.add(m);
   }
 
-  // 返回 this 在正模 m 下的乘法逆元.
+  // 返回 this 在正模 m 下的乘法逆元,结果位于 [0, m)
+  // m <= 0 或 this 与 m 不互素时抛出 std::runtime_error
   bigint mod_inverse(const bigint& m) const {
     if (m.signum_ != 1) {
       throw std::runtime_error("modulus not positive");
     }
-    if (m == ONE) {
+    if (m.compare_to(ONE) == 0) {
       return ZERO;
     }
     bigint mod_val = (signum_ < 0 || compare_magnitude(m) >= 0) ? mod(m) : *this;
-    if (mod_val == ONE) {
+    if (mod_val.compare_to(ONE) == 0) {
       return ONE;
     }
     mutable_bigint a = mod_val.to_mutable();
@@ -3623,22 +3901,24 @@ struct bigint {
     return from_mutable(std::move(inv), 1);
   }
 
-  // 返回 this^exponent mod m;m 必须为正.
+  // 返回 this^exponent mod m,结果位于 [0, m)
+  // exponent 可以为负,此时结果是正指数模幂的乘法逆元
+  // m <= 0 或所需乘法逆元不存在时抛出 std::runtime_error
   bigint mod_pow(const bigint& exponent, const bigint& m) const {
     if (m.signum_ <= 0) {
       throw std::runtime_error("modulus not positive");
     }
     if (exponent.signum_ == 0) {
-      return m == ONE ? ZERO : ONE;
+      return m.compare_to(ONE) == 0 ? ZERO : ONE;
     }
-    if (*this == ONE) {
-      return m == ONE ? ZERO : ONE;
+    if (compare_to(ONE) == 0) {
+      return m.compare_to(ONE) == 0 ? ZERO : ONE;
     }
     if (signum_ == 0 && exponent.signum_ >= 0) {
       return ZERO;
     }
-    if (*this == NEGATIVE_ONE && !exponent.test_bit(0)) {
-      return m == ONE ? ZERO : ONE;
+    if (compare_to(NEGATIVE_ONE) == 0 && !exponent.test_bit(0)) {
+      return m.compare_to(ONE) == 0 ? ZERO : ONE;
     }
 
     bool invert_result = exponent.signum_ < 0;
@@ -3657,7 +3937,7 @@ struct bigint {
       const bigint m2 = ONE.shift_left(p);
 
       const bigint base2 = (signum_ < 0 || compare_to(m1) >= 0 ? mod(m1) : *this);
-      const bigint a1 = (m1 == ONE ? ZERO : base2.odd_mod_pow(exp, m1));
+      const bigint a1 = (m1.compare_to(ONE) == 0 ? ZERO : base2.odd_mod_pow(exp, m1));
       const bigint a2 = base.mod_pow2(exp, p);
 
       const bigint y1 = m2.mod_inverse(m1);
@@ -3678,14 +3958,73 @@ struct bigint {
     return invert_result ? result.mod_inverse(m) : result;
   }
 
-  // odd modulus 的模幂;完整 Montgomery 滑动窗口版本会继续.
+  // 计算 this^y mod z,其中 z 必须为正奇数且 y 必须为正
+  // 根据模数规模选择普通模乘或 Montgomery 滑动窗口算法
   bigint odd_mod_pow(const bigint& y, const bigint& z) const {
-    if (y == ONE) {
+    if (y.compare_to(ONE) == 0) {
       return *this;
     }
     if (signum_ == 0) {
       return ZERO;
     }
+
+    // 单 limb 模数直接使用 64 位运算,避免构造 Montgomery 工作数组
+    if (z.mag_.length() == 1) {
+      const std::uint32_t modulus = z.mag_[0];
+      std::uint64_t result = 1 % modulus;
+      const std::uint64_t base = mod_uint32(modulus);
+      for (std::int32_t i = 0; i < y.mag_.length(); ++i) {
+        const std::uint32_t word = y.mag_[i];
+        const std::int32_t first_bit = i == 0 ? 31 - decimal_detail::count_leading_zeros(word) : 31;
+        for (std::int32_t bit = first_bit; bit >= 0; --bit) {
+          result = (result * result) % modulus;
+          if (((word >> bit) & 1U) != 0) {
+            result = (result * base) % modulus;
+          }
+        }
+      }
+      return value_of(static_cast<std::int64_t>(result));
+    }
+
+#if DECIMAL_DETAIL_HAS_FAST_DIV128
+    // 双 limb 模数使用 128/64 位运算,避免小整数素性测试进入 Montgomery 路径
+    if (z.mag_.length() == 2) {
+      const std::uint64_t modulus = (static_cast<std::uint64_t>(z.mag_[0]) << 32) | z.mag_[1];
+      auto reduce = [modulus](const jarray<std::uint32_t>& magnitude) {
+        std::uint64_t remainder = 0;
+        for (std::int32_t i = 0; i < magnitude.length(); ++i) {
+          const std::uint64_t high = remainder >> 32;
+          const std::uint64_t low = (remainder << 32) | magnitude[i];
+          decimal_detail::divide_128_by_64(high, low, modulus, &remainder);
+        }
+        return remainder;
+      };
+      auto multiply_mod = [modulus](std::uint64_t lhs, std::uint64_t rhs) {
+        const decimal_detail::uint128_words product = decimal_detail::multiply_64x64(lhs, rhs);
+        std::uint64_t remainder = 0;
+        decimal_detail::divide_128_by_64(product.high, product.low, modulus, &remainder);
+        return remainder;
+      };
+
+      std::uint64_t result = 1 % modulus;
+      const std::uint64_t base = reduce(mag_);
+      for (std::int32_t i = 0; i < y.mag_.length(); ++i) {
+        const std::uint32_t word = y.mag_[i];
+        const std::int32_t first_bit = i == 0 ? 31 - decimal_detail::count_leading_zeros(word) : 31;
+        for (std::int32_t bit = first_bit; bit >= 0; --bit) {
+          result = multiply_mod(result, result);
+          if (((word >> bit) & 1U) != 0) {
+            result = multiply_mod(result, base);
+          }
+        }
+      }
+      if (result <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+        return value_of(static_cast<std::int64_t>(result));
+      }
+      return bigint(
+          1, jarray<std::uint32_t>{static_cast<std::uint32_t>(result >> 32), static_cast<std::uint32_t>(result)});
+    }
+#endif
 
     jarray<std::uint32_t> base = mag_.clone();
     const jarray<std::uint32_t>& exp = y.mag_;
@@ -3763,7 +4102,7 @@ struct bigint {
       ++multpos;
     }
 
-    jarray<std::uint32_t> mult = table[static_cast<size_t>((static_cast<std::uint32_t>((buf)) >> 1))].clone();
+    const jarray<std::uint32_t>* mult = &table[static_cast<size_t>((static_cast<std::uint32_t>((buf)) >> 1))];
 
     buf = 0;
     if (multpos == ebits) {
@@ -3790,20 +4129,17 @@ struct bigint {
           buf = static_cast<std::int32_t>((static_cast<std::uint32_t>((buf)) >> 1));
           ++multpos;
         }
-        mult = table[static_cast<size_t>((static_cast<std::uint32_t>((buf)) >> 1))].clone();
+        mult = &table[static_cast<size_t>((static_cast<std::uint32_t>((buf)) >> 1))];
         buf = 0;
       }
 
       if (ebits == multpos) {
         if (isone) {
-          b = mult.clone();
+          b = mult->clone();
           isone = false;
         } else {
-          t = b;
-          a = montgomery_multiply(t, mult, mod, mod_len, inv, &a);
-          t = a;
-          a = b;
-          b = t;
+          montgomery_multiply_into(b, *mult, mod, mod_len, inv, a);
+          a.swap(b);
         }
       }
 
@@ -3812,11 +4148,8 @@ struct bigint {
       }
 
       if (!isone) {
-        t = b;
-        a = montgomery_square(t, mod, mod_len, inv, &a);
-        t = a;
-        a = b;
-        b = t;
+        montgomery_square_into(b, mod, mod_len, inv, a);
+        a.swap(b);
       }
     }
 
@@ -3828,8 +4161,37 @@ struct bigint {
     return bigint(1, std::move(t2));
   }
 
-  // 返回 this**exponent mod 2**p.
+  // 返回 this^exponent mod 2^p
+  // 调用方保证 exponent 非负且 p 为正
   bigint mod_pow2(const bigint& exponent, std::int32_t p) const {
+    if (p > 0 && p <= 64 && exponent.signum_ != 0) {
+      std::uint64_t base = mag_.length() == 0 ? 0 : mag_[mag_.length() - 1];
+      if (mag_.length() > 1) {
+        base |= static_cast<std::uint64_t>(mag_[mag_.length() - 2]) << 32;
+      }
+      const std::uint64_t mask = p == 64 ? UINT64_MAX : (std::uint64_t{1} << p) - 1;
+      base &= mask;
+
+      std::uint64_t result = 1;
+      std::int32_t limit = exponent.bit_length();
+      if ((base & 1U) != 0) {
+        limit = (std::min)(p - 1, limit);
+      }
+      for (std::int32_t bit = 0; bit < limit; ++bit) {
+        if (exponent.test_bit(bit)) {
+          result = (result * base) & mask;
+        }
+        if (bit + 1 < limit) {
+          base = (base * base) & mask;
+        }
+      }
+      if (result <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+        return value_of(static_cast<std::int64_t>(result));
+      }
+      return bigint(
+          1, jarray<std::uint32_t>{static_cast<std::uint32_t>(result >> 32), static_cast<std::uint32_t>(result)});
+    }
+
     bigint result = ONE;
     bigint base_to_pow2 = mod2(p);
     std::int32_t exp_offset = 0;
@@ -3851,7 +4213,7 @@ struct bigint {
     return result;
   }
 
-  // 返回 this mod 2**p;假定 this >= 0 且 p > 0.
+  // 返回 this mod 2^p,调用方必须保证 this >= 0 且 p > 0
   bigint mod2(std::int32_t p) const {
     if (bit_length() <= p) {
       return *this;
@@ -3864,10 +4226,11 @@ struct bigint {
     const std::int32_t excess_bits = (num_ints << 5) - p;
     mag[0] &= static_cast<std::uint32_t>(((std::uint64_t{1} << (32 - excess_bits)) - 1));
 
-    return mag[0] == 0 ? bigint(1, mag) : bigint(1, std::move(mag));
+    return bigint(1, std::move(mag));
   }
 
-  // 返回 this << n;n 为负时等价于右移 -n.
+  // 返回 this << n,等价于 floor(this * 2^n)
+  // n 可以为负,此时执行算术右移 -n 位
   bigint shift_left(std::int32_t n) const {
     if (signum_ == 0) {
       return ZERO;
@@ -3881,12 +4244,8 @@ struct bigint {
     }
   }
 
-  // 返回 this << n (运算符形式).
-  bigint operator<<(std::int32_t n) const {
-    return shift_left(n);
-  }
-
-  // 返回 this >> n; 负数执行 bigint 的算术右移语义.
+  // 返回 this >> n,正移位距离执行带符号扩展的算术右移
+  // 结果等价于 floor(this / 2^n),n 为负时执行左移 -n 位
   bigint shift_right(std::int32_t n) const {
     if (signum_ == 0) {
       return ZERO;
@@ -3900,7 +4259,8 @@ struct bigint {
     }
   }
 
-  // 无符号距离右移核心
+  // 使用按无符号值解释的移位距离 n 执行算术右移
+  // 仅供 shift_left() 和 shift_right() 处理极端负移位距离
   bigint shift_right_impl(std::int32_t n) const {
     const std::int32_t n_ints = static_cast<std::int32_t>((static_cast<std::uint32_t>((n)) >> 5));
     const std::int32_t n_bits = n & 0x1f;
@@ -3944,82 +4304,64 @@ struct bigint {
     return bigint(signum_, std::move(new_mag));
   }
 
-  // 返回 this >> n (运算符形式).
-  bigint operator>>(std::int32_t n) const {
-    return shift_right(n);
-  }
-
-  // 返回两个 bigint 的按位与,按无限二进制补码语义执行.
+  // 返回 this & val,按具有无限符号扩展位的二进制补码语义执行
+  // 结果仅在两个操作数均为负数时为负
   bigint and_op(const bigint& val) const {
     const std::int32_t len = std::max(int_length(), val.int_length());
     jarray<std::uint32_t> result(len);
     for (std::int32_t i = 0; i < len; ++i) {
       result[i] = get_int(len - i - 1) & val.get_int(len - i - 1);
     }
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 返回 this & val (运算符形式).
-  bigint operator&(const bigint& val) const {
-    return and_op(val);
-  }
-
-  // 返回两个 bigint 的按位或,按无限二进制补码语义执行.
+  // 返回 this | val,按具有无限符号扩展位的二进制补码语义执行
+  // 任一操作数为负数时结果为负
   bigint or_op(const bigint& val) const {
     const std::int32_t len = std::max(int_length(), val.int_length());
     jarray<std::uint32_t> result(len);
     for (std::int32_t i = 0; i < len; ++i) {
       result[i] = get_int(len - i - 1) | val.get_int(len - i - 1);
     }
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 返回 this | val (运算符形式).
-  bigint operator|(const bigint& val) const {
-    return or_op(val);
-  }
-
-  // 返回两个 bigint 的按位异或,按无限二进制补码语义执行.
+  // 返回 this ^ val,按具有无限符号扩展位的二进制补码语义执行
+  // 恰好一个操作数为负数时结果为负
   bigint xor_op(const bigint& val) const {
     const std::int32_t len = std::max(int_length(), val.int_length());
     jarray<std::uint32_t> result(len);
     for (std::int32_t i = 0; i < len; ++i) {
       result[i] = get_int(len - i - 1) ^ val.get_int(len - i - 1);
     }
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 返回 this ^ val (运算符形式).
-  bigint operator^(const bigint& val) const {
-    return xor_op(val);
-  }
-
-  // 返回按位取反,等价于 -(this + 1).
+  // 返回 ~this,按具有无限符号扩展位的二进制补码语义执行
+  // 结果等价于 -(this + 1),当前值非负时结果为负
   bigint not_op() const {
     const std::int32_t len = int_length();
     jarray<std::uint32_t> result(len);
     for (std::int32_t i = 0; i < len; ++i) {
       result[i] = ~get_int(len - i - 1);
     }
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 返回按位取反 (运算符形式).
-  bigint operator~() const {
-    return not_op();
-  }
-
-  // 返回 this & ~val.
+  // 返回 this & ~val,等价于 and_op(val.not_op())
+  // 该操作用于在不构造中间补数的情况下清除一组掩码 bit
   bigint and_not(const bigint& val) const {
     const std::int32_t len = std::max(int_length(), val.int_length());
     jarray<std::uint32_t> result(len);
     for (std::int32_t i = 0; i < len; ++i) {
       result[i] = get_int(len - i - 1) & ~val.get_int(len - i - 1);
     }
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 测试第 n 个 bit 是否为 1.
+  // 返回二进制补码表示中下标 n 的 bit 是否为 1
+  // 最低有效 bit 的下标为 0,必要时按无限符号位扩展
+  // n < 0 时抛出 std::runtime_error
   bool test_bit(std::int32_t n) const {
     if (n < 0) {
       throw std::runtime_error("negative bit address");
@@ -4027,7 +4369,8 @@ struct bigint {
     return (get_int(n >> 5) & (std::uint32_t(1) << (n & 31))) != 0;
   }
 
-  // 设置第 n 个 bit.
+  // 返回将二进制补码表示中下标 n 的 bit 置为 1 后的新 bigint
+  // 最低有效 bit 的下标为 0,n < 0 时抛出 std::runtime_error
   bigint set_bit(std::int32_t n) const {
     if (n < 0) {
       throw std::runtime_error("negative bit address");
@@ -4038,10 +4381,11 @@ struct bigint {
       result[result.length() - i - 1] = get_int(i);
     }
     result[result.length() - int_num - 1] |= std::uint32_t(1) << (n & 31);
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 清除第 n 个 bit.
+  // 返回将二进制补码表示中下标 n 的 bit 清为 0 后的新 bigint
+  // 最低有效 bit 的下标为 0,n < 0 时抛出 std::runtime_error
   bigint clear_bit(std::int32_t n) const {
     if (n < 0) {
       throw std::runtime_error("negative bit address");
@@ -4052,10 +4396,11 @@ struct bigint {
       result[result.length() - i - 1] = get_int(i);
     }
     result[result.length() - int_num - 1] &= ~(std::uint32_t(1) << (n & 31));
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 翻转第 n 个 bit.
+  // 返回将二进制补码表示中下标 n 的 bit 翻转后的新 bigint
+  // 最低有效 bit 的下标为 0,n < 0 时抛出 std::runtime_error
   bigint flip_bit(std::int32_t n) const {
     if (n < 0) {
       throw std::runtime_error("negative bit address");
@@ -4066,10 +4411,11 @@ struct bigint {
       result[result.length() - i - 1] = get_int(i);
     }
     result[result.length() - int_num - 1] ^= std::uint32_t(1) << (n & 31);
-    return value_of(result);
+    return value_of(std::move(result));
   }
 
-  // 返回最低 set bit 的下标;零返回 -1.
+  // 返回二进制补码表示中最低 1 bit 的下标,即其右侧连续 0 bit 的数量
+  // 最低有效 bit 的下标为 0,当前值为 0 时返回 -1
   std::int32_t get_lowest_set_bit() const {
     std::int32_t lsb = lowest_set_bit_plus_two_ - 2;
     if (lsb == -2) {
@@ -4089,7 +4435,8 @@ struct bigint {
     return lsb;
   }
 
-  // 返回最小二进制补码表示所需的 bit 数,不含符号位.
+  // 返回当前值最小二进制补码表示所需的 bit 数,不包含符号位
+  // 正数等于普通二进制表示的长度,0 返回 0
   std::int32_t bit_length() const {
     std::int32_t n = bit_length_plus_one_ - 1;
     if (n == -1) {
@@ -4112,7 +4459,8 @@ struct bigint {
     return n;
   }
 
-  // 返回二进制补码表示中与符号位不同的 bit 个数.
+  // 返回二进制补码表示中与符号位不同的 bit 数量
+  // 该定义对负数统计其无限符号扩展表示中的有限非符号部分
   std::int32_t bit_count() const {
     std::int32_t bc = bit_count_plus_one_ - 1;
     if (bc == -1) {
@@ -4137,22 +4485,23 @@ struct bigint {
     return bc;
   }
 
-  // 补码表示所需的 32-bit word 数.
+  // 返回容纳最小二进制补码表示所需的 32 位 limb 数
   std::int32_t int_length() const {
     return (bit_length() >> 5) + 1;
   }
 
-  // 返回符号位: 负数返回 1, 非负返回 0.
+  // 返回无限二进制补码表示的符号 bit,负数返回 1,非负数返回 0
   std::int32_t sign_bit() const {
     return signum_ < 0 ? 1 : 0;
   }
 
-  // 返回符号扩展的 32 位单元: 负数为 0xffffffff, 非负为 0.
+  // 返回无限符号扩展使用的 32 位 limb,负数返回 0xffffffff,非负数返回 0
   std::uint32_t sign_int() const {
     return signum_ < 0 ? 0xffffffffU : 0U;
   }
 
-  // 返回小端补码第 n 个 32 位单元,越界时执行无限符号扩展.
+  // 返回二进制补码小端视图中下标 n 的 32 位 limb
+  // 超出实际 magnitude 时执行无限符号扩展,n < 0 时返回 0
   std::uint32_t get_int(std::int32_t n) const {
     if (n < 0) {
       return 0;
@@ -4167,7 +4516,8 @@ struct bigint {
     return n <= first_nonzero_int_num() ? std::uint32_t(0U - mag_int) : ~mag_int;
   }
 
-  // 返回绝对值小端视图中第一个非零 32 位单元的下标.
+  // 返回 magnitude 小端视图中最低非零 limb 的下标
+  // 结果用于按需生成负数的二进制补码 limb
   std::int32_t first_nonzero_int_num() const {
     std::int32_t fn = first_nonzero_int_num_plus_two_ - 2;
     if (fn == -2) {
@@ -4181,45 +4531,54 @@ struct bigint {
     return fn;
   }
 
-  // 按指定 certainty 判断是否为 probable prime.
+  // 判断 abs(this) 是否为 probable prime
+  // 返回 false 表示一定是合数,返回 true 时为素数的概率大于 1 - 2^(-certainty)
+  // certainty <= 0 时无条件返回 true,执行时间随 certainty 增大
   bool is_probable_prime(std::int32_t certainty) const {
     if (certainty <= 0) {
       return true;
     }
     bigint n = abs();
-    if (n == TWO) {
+    if (n.compare_to(TWO) == 0) {
       return true;
     }
-    if (n.signum_ == 0 || n == ONE || n.is_even()) {
+    if (n.signum_ == 0 || n.compare_to(ONE) == 0 || n.is_even()) {
       return false;
     }
     return n.prime_to_certainty(certainty);
   }
 
-  // 返回指定 bitLength 的 probable prime
+  // 使用 rnd 返回 bit_length 恰好等于指定值的正 probable prime
+  // 使用 DEFAULT_PRIME_CERTAINTY 控制误判概率,bit_length < 2 时抛出异常
   static bigint probable_prime(std::int32_t bit_length, std::mt19937_64& rnd);
 
-  // 小 bitLength 的随机 probable prime 搜索.
+  // 搜索 bit_length 小于 SMALL_PRIME_THRESHOLD 的随机 probable prime
+  // 先排除小素数因子,再按 certainty 执行概率素性测试
   static bigint small_prime(std::int32_t bit_length, std::int32_t certainty, std::mt19937_64& rnd);
 
-  // 大 bitLength 的随机 probable prime 搜索.
+  // 搜索 bit_length 较大的随机 probable prime
+  // 使用 bit_sieve 批量排除合数后对剩余候选执行概率素性测试
   static bigint large_prime(std::int32_t bit_length, std::int32_t certainty, std::mt19937_64& rnd);
 
-  // next_probable_prime 的搜索长度.
+  // 返回 next_probable_prime() 对指定 bit_length 使用的筛选区间长度
+  // bit_length 超过实现允许的搜索上限时抛出 std::runtime_error
   static std::int32_t get_prime_search_len(std::int32_t bit_length);
 
-  // SMALL_PRIME_PRODUCT 常量.
+  // 返回 3、5、7 到 41 的连续小素数乘积
   static bigint small_prime_product();
 
-  // 返回大于当前值的第一个 probable prime.
+  // 返回严格大于当前值的第一个 probable prime
+  // 当前值为负数时抛出 std::runtime_error
   bigint next_probable_prime() const;
 
-  // Miller-Rabin + Lucas-Lehmer probable-prime 测试入口.
+  // 使用内部随机源执行 certainty 对应强度的 probable-prime 测试
+  // 根据位数选择 Miller-Rabin 轮数,必要时再执行 Lucas 测试
   bool prime_to_certainty(std::int32_t certainty) const {
     return prime_to_certainty(certainty, nullptr);
   }
 
-  // Miller-Rabin + Lucas-Lehmer probable-prime 测试入口
+  // 使用可选 random 随机源执行 certainty 对应强度的 probable-prime 测试
+  // random 为空时使用线程局部随机源
   bool prime_to_certainty(std::int32_t certainty, std::mt19937_64* random) const {
     std::int32_t rounds = 0;
     const std::int32_t n = (std::min(certainty, std::numeric_limits<std::int32_t>::max() - 1) + 1) / 2;
@@ -4247,7 +4606,7 @@ struct bigint {
     return passes_miller_rabin(rounds, random) && passes_lucas_lehmer();
   }
 
-  // Lucas-Lehmer probable-prime 测试.
+  // 对当前正奇数执行 Lucas-Lehmer probable-prime 测试
   bool passes_lucas_lehmer() const {
     const bigint this_plus_one = add(ONE);
 
@@ -4257,10 +4616,11 @@ struct bigint {
     }
 
     const bigint u = lucas_lehmer_sequence(d, this_plus_one, *this);
-    return u.mod(*this) == ZERO;
+    return u.mod(*this).is_zero();
   }
 
-  // 计算 Jacobi(p,n),假定 n 为正奇数且 n>=3.
+  // 返回 Jacobi 符号 (p / n)
+  // 调用方必须保证 n 为不小于 3 的正奇数
   static std::int32_t jacobi_symbol(std::int32_t p, const bigint& n) {
     if (p == 0) {
       return 0;
@@ -4292,7 +4652,7 @@ struct bigint {
     if ((p & u & 2) != 0) {
       j = -j;
     }
-    u = n.mod(value_of(p)).int_value();
+    u = static_cast<std::int32_t>(n.mod_uint32(static_cast<std::uint32_t>(p)));
 
     while (u != 0) {
       while ((u & 3) == 0) {
@@ -4318,8 +4678,63 @@ struct bigint {
     return 0;
   }
 
-  // Lucas-Lehmer 序列计算.
+  // 计算 Lucas probable-prime 测试所需的序列项
+  // z 为判别式,k 为序列下标,n 为正模数
   static bigint lucas_lehmer_sequence(std::int32_t z, const bigint& k, const bigint& n) {
+#if DECIMAL_DETAIL_HAS_FAST_DIV128
+    if (n.mag_.length() <= 2) {
+      const std::uint64_t modulus =
+          n.mag_.length() == 1 ? n.mag_[0] : (static_cast<std::uint64_t>(n.mag_[0]) << 32) | n.mag_[1];
+      auto multiply_mod = [modulus](std::uint64_t lhs, std::uint64_t rhs) {
+        const decimal_detail::uint128_words product = decimal_detail::multiply_64x64(lhs, rhs);
+        std::uint64_t remainder = 0;
+        decimal_detail::divide_128_by_64(product.high, product.low, modulus, &remainder);
+        return remainder;
+      };
+      auto add_mod = [modulus](std::uint64_t lhs, std::uint64_t rhs) {
+        return lhs >= modulus - rhs ? lhs - (modulus - rhs) : lhs + rhs;
+      };
+      auto subtract_mod = [modulus](std::uint64_t lhs, std::uint64_t rhs) {
+        return lhs >= rhs ? lhs - rhs : modulus - (rhs - lhs);
+      };
+      auto halve_mod = [modulus](std::uint64_t value) {
+        return (value & 1U) == 0 ? value >> 1 : (value >> 1) + (modulus >> 1) + 1;
+      };
+      auto from_unsigned = [](std::uint64_t value) {
+        if (value <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())) {
+          return value_of(static_cast<std::int64_t>(value));
+        }
+        return bigint(
+            1, jarray<std::uint32_t>{static_cast<std::uint32_t>(value >> 32), static_cast<std::uint32_t>(value)});
+      };
+
+      const bool negative_d = z < 0;
+      const std::uint64_t magnitude_d =
+          negative_d ? static_cast<std::uint64_t>(-static_cast<std::int64_t>(z)) : static_cast<std::uint64_t>(z);
+      std::uint64_t u = 1;
+      std::uint64_t v = 1;
+      for (std::int32_t i = k.bit_length() - 2; i >= 0; --i) {
+        std::uint64_t u2 = multiply_mod(u, v);
+        const std::uint64_t du2 = multiply_mod(multiply_mod(u, u), magnitude_d % modulus);
+        std::uint64_t v2 = multiply_mod(v, v);
+        v2 = negative_d ? subtract_mod(v2, du2) : add_mod(v2, du2);
+        v2 = halve_mod(v2);
+
+        u = u2;
+        v = v2;
+        if (k.test_bit(i)) {
+          u2 = halve_mod(add_mod(u, v));
+          const std::uint64_t du = multiply_mod(u, magnitude_d % modulus);
+          v2 = negative_d ? subtract_mod(v, du) : add_mod(v, du);
+          v2 = halve_mod(v2);
+          u = u2;
+          v = v2;
+        }
+      }
+      return from_unsigned(u);
+    }
+#endif
+
     const bigint d = value_of(z);
     bigint u = ONE;
     bigint v = ONE;
@@ -4354,12 +4769,13 @@ struct bigint {
     return u;
   }
 
-  // Miller-Rabin 测试.
+  // 使用内部随机源对当前正奇数执行指定轮数的 Miller-Rabin 测试
   bool passes_miller_rabin(std::int32_t iterations) const {
     return passes_miller_rabin(iterations, nullptr);
   }
 
-  // Miller-Rabin 测试
+  // 使用可选 random 随机源执行指定轮数的 Miller-Rabin 测试
+  // random 为空时使用线程局部随机源
   bool passes_miller_rabin(std::int32_t iterations, std::mt19937_64* random) const {
     const bigint this_minus_one = subtract(ONE);
     bigint m = this_minus_one;
@@ -4376,25 +4792,31 @@ struct bigint {
 
       std::int32_t j = 0;
       bigint z = b.mod_pow(m, *this);
-      while (!((j == 0 && z == ONE) || z == this_minus_one)) {
-        if ((j > 0 && z == ONE) || ++j == a) {
+      while (!((j == 0 && z.compare_to(ONE) == 0) || z.compare_to(this_minus_one) == 0)) {
+        if ((j > 0 && z.compare_to(ONE) == 0) || ++j == a) {
           return false;
         }
-        z = z.mod_pow(TWO, *this);
+        z = z.square().mod(*this);
       }
     }
     return true;
   }
 
-  // 生成随机 byte 数组并清除多余高位
+  // 使用 rnd 生成 num_bits 个随机 bit 的大端 byte 数组
+  // 未使用的最高 bit 会被清零,num_bits 必须非负
   static jarray<std::uint8_t> random_bits(std::int32_t num_bits, std::mt19937_64& rnd) {
     if (num_bits < 0) {
       throw std::invalid_argument("num bits must be non-negative");
     }
     const std::int32_t num_bytes = static_cast<std::int32_t>(((static_cast<std::int64_t>((num_bits)) + 7) / 8));
     jarray<std::uint8_t> bytes(num_bytes);
-    for (std::int32_t i = 0; i < num_bytes; ++i) {
-      bytes[i] = static_cast<std::uint8_t>((rnd() & 0xffU));
+    for (std::int32_t i = 0; i < num_bytes;) {
+      std::uint64_t random_word = rnd();
+      const std::int32_t end = (std::min)(num_bytes, i + 8);
+      while (i < end) {
+        bytes[i++] = static_cast<std::uint8_t>(random_word);
+        random_word >>= 8;
+      }
     }
     if (num_bytes > 0) {
       const std::int32_t excess_bits = 8 * num_bytes - num_bits;
@@ -4403,13 +4825,35 @@ struct bigint {
     return bytes;
   }
 
-  // 生成 [0, 2^num_bits) 的非负随机 bigint.
-  static bigint random_bigint(std::int32_t num_bits, std::mt19937_64& rnd) {
-    jarray<std::uint8_t> bytes = random_bits(num_bits, rnd);
-    return bigint(1, bytes);
+  // 使用 rnd 生成均匀分布在 [0, 2^num_bits) 的规范大端 magnitude
+  // num_bits 必须非负,为 0 时返回空数组
+  static jarray<std::uint32_t> random_magnitude(std::int32_t num_bits, std::mt19937_64& rnd) {
+    if (num_bits < 0) {
+      throw std::invalid_argument("num bits must be non-negative");
+    }
+    const std::int32_t length = (num_bits + 31) / 32;
+    jarray<std::uint32_t> magnitude(length);
+    for (std::int32_t i = 0; i < length;) {
+      const std::uint64_t random_word = rnd();
+      magnitude[i++] = static_cast<std::uint32_t>(random_word);
+      if (i < length) {
+        magnitude[i++] = static_cast<std::uint32_t>(random_word >> 32);
+      }
+    }
+    if (length > 0) {
+      const std::int32_t excess_bits = 32 * length - num_bits;
+      magnitude[0] &= UINT32_MAX >> excess_bits;
+    }
+    return trusted_strip_leading_zero_limbs(std::move(magnitude));
   }
 
-  // 返回指定 radix 下的字符串表示;radix 越界时按 10 处理.
+  // 使用 rnd 生成均匀分布在 [0, 2^num_bits) 的非负 bigint
+  static bigint random_bigint(std::int32_t num_bits, std::mt19937_64& rnd) {
+    return bigint(num_bits, rnd);
+  }
+
+  // 返回当前值在 radix 进制下的字符串表示
+  // 使用 0-9 和小写 a-z 表示数字,负数带前导负号,radix 越界时按十进制处理
   std::string to_string(std::int32_t radix) const {
     if (signum_ == 0) {
       return "0";
@@ -4433,12 +4877,12 @@ struct bigint {
     return sb;
   }
 
-  // 返回十进制字符串表示.
+  // 返回当前值的十进制字符串表示
   std::string to_string() const {
     return to_string(10);
   }
 
-  // 向字符串追加 num_zeros 个 0.
+  // 当 num_zeros > 0 时向 buf 追加指定数量的字符 '0'
   static void pad_with_zeros(std::string& buf, std::int32_t num_zeros) {
     static const std::string zeros(NUM_ZEROS, '0');
     while (num_zeros >= NUM_ZEROS) {
@@ -4450,7 +4894,8 @@ struct bigint {
     }
   }
 
-  // 小规模转字符串
+  // 将当前非负值按 radix 转换并追加到 buf
+  // 用于小规模 magnitude,digits > 0 时在左侧补零到至少指定宽度
   void small_to_string(std::int32_t radix, std::string& buf, std::int32_t digits) const {
     assert(signum_ >= 0);
 
@@ -4460,23 +4905,49 @@ struct bigint {
     }
 
     const std::int32_t max_num_digit_groups = (4 * mag_.length() + 6) / 7;
-    std::vector<std::uint64_t> digit_groups(static_cast<size_t>((max_num_digit_groups)));
-
-    bigint tmp = *this;
-    std::int32_t num_groups = 0;
-    while (tmp.signum_ != 0) {
-      const bigint d = long_radix_value(radix);
-      auto results = tmp.divide_and_remainder(d);
-      digit_groups[static_cast<size_t>((num_groups++))] = static_cast<std::uint64_t>((results.second.long_value()));
-      tmp = results.first;
+    constexpr std::size_t stack_group_capacity = (4 * SCHOENHAGE_BASE_CONVERSION_THRESHOLD + 6) / 7;
+    std::array<std::uint64_t, stack_group_capacity> stack_groups{};
+    std::vector<std::uint64_t> heap_groups;
+    std::uint64_t* digit_groups = stack_groups.data();
+    if (max_num_digit_groups > static_cast<std::int32_t>(stack_group_capacity)) {
+      heap_groups.resize(static_cast<size_t>((max_num_digit_groups)));
+      digit_groups = heap_groups.data();
     }
 
-    std::string s = uint64_to_string(digit_groups[static_cast<size_t>((num_groups - 1))], radix);
+    const std::uint64_t divisor = long_radix_magnitude(radix);
+    std::int32_t num_groups = 0;
+#if DECIMAL_DETAIL_HAS_FAST_DIV128
+    jarray<std::uint32_t> magnitude = mag_.clone();
+    std::int32_t offset = 0;
+    while (offset < magnitude.length()) {
+      std::uint64_t remainder = 0;
+      for (std::int32_t i = offset; i < magnitude.length(); ++i) {
+        const std::uint64_t high = remainder >> 32;
+        const std::uint64_t low = (remainder << 32) | magnitude[i];
+        magnitude[i] = static_cast<std::uint32_t>(decimal_detail::divide_128_by_64(high, low, divisor, &remainder));
+      }
+      digit_groups[num_groups++] = remainder;
+      while (offset < magnitude.length() && magnitude[offset] == 0) {
+        ++offset;
+      }
+    }
+#else
+    mutable_bigint tmp(mag_);
+    mutable_bigint quotient;
+    mutable_bigint remainder;
+    while (!tmp.is_zero()) {
+      digit_groups[num_groups++] = tmp.divide(divisor, quotient, remainder);
+      std::swap(tmp, quotient);
+      quotient.reset();
+    }
+#endif
+
+    std::string s = uint64_to_string(digit_groups[num_groups - 1], radix);
     pad_with_zeros(buf, digits - (static_cast<std::int32_t>((s.size())) + (num_groups - 1) * digits_per_long[radix]));
     buf.append(s);
 
     for (std::int32_t i = num_groups - 2; i >= 0; --i) {
-      s = uint64_to_string(digit_groups[static_cast<size_t>((i))], radix);
+      s = uint64_to_string(digit_groups[i], radix);
       const std::int32_t num_leading_zeros = digits_per_long[radix] - static_cast<std::int32_t>((s.size()));
       if (num_leading_zeros != 0) {
         pad_with_zeros(buf, num_leading_zeros);
@@ -4485,7 +4956,8 @@ struct bigint {
     }
   }
 
-  // Schoenhage 递归转字符串.
+  // 使用 Schoenhage 递归基数转换将非负 u 追加到 sb
+  // digits 指定当前递归分段所需的最小输出位数
   static void to_string_recursive(const bigint& u, std::string& sb, std::int32_t radix, std::int32_t digits) {
     assert(u.signum() >= 0);
 
@@ -4506,7 +4978,7 @@ struct bigint {
     to_string_recursive(results.second, sb, radix, expected_digits);
   }
 
-  // 返回 radix^(2^exponent).
+  // 返回 radix^(2^exponent),并按 radix 和 exponent 缓存计算结果
   static bigint get_radix_conversion_cache(std::int32_t radix, std::int32_t exponent) {
     static std::vector<std::vector<bigint>> power_cache;
     if (power_cache.empty()) {
@@ -4529,7 +5001,7 @@ struct bigint {
     return cache_line[static_cast<size_t>((exponent))];
   }
 
-  // radix 对应的 log cache.
+  // 返回 log(radix) 的缓存值,用于估算字符串位数和递归切分位置
   static double log_cache(std::int32_t radix) {
     static std::array<double, MAX_RADIX + 1> cache{};
     static bool initialized = false;
@@ -4542,8 +5014,9 @@ struct bigint {
     return cache[static_cast<size_t>((radix))];
   }
 
-  // longRadix[radix].
-  static bigint long_radix_value(std::int32_t radix) {
+  // 返回不超过 std::uint64_t 范围的最大 radix 幂
+  // 该值用于按多个 radix 数字为一组执行基数转换
+  static std::uint64_t long_radix_magnitude(std::int32_t radix) {
     static const std::array<std::uint64_t, 37> values = {0,
                                                          0,
                                                          0x4000000000000000ULL,
@@ -4581,10 +5054,16 @@ struct bigint {
                                                          0x211e44f7d02c1000ULL,
                                                          0x2ee56725f06e5c71ULL,
                                                          0x41c21cb8e1000000ULL};
-    return value_of(static_cast<std::int64_t>((values[static_cast<size_t>((radix))])));
+    return values[static_cast<size_t>((radix))];
   }
 
-  // unsigned long 按 radix 转字符串.
+  // 以正 bigint 返回 long_radix_magnitude(radix)
+  static bigint long_radix_value(std::int32_t radix) {
+    return value_of(static_cast<std::int64_t>((long_radix_magnitude(radix))));
+  }
+
+  // 将无符号 64 位 value 转换为 radix 进制字符串
+  // radix 必须位于 [MIN_RADIX, MAX_RADIX]
   static std::string uint64_to_string(std::uint64_t value, std::int32_t radix) {
     static constexpr char chars[] = "0123456789abcdefghijklmnopqrstuvwxyz";
     if (value == 0) {
@@ -4601,7 +5080,8 @@ struct bigint {
     return out;
   }
 
-  // 返回最小长度的大端二进制补码 byte 数组.
+  // 返回当前值的最短大端二进制补码 byte 数组
+  // 数组至少保留一个符号 bit,输出可由对应 byte 数组构造函数无损还原
   jarray<std::uint8_t> to_byte_array() const {
     const std::int32_t byte_len = bit_length() / 8 + 1;
     jarray<std::uint8_t> byte_array(byte_len);
@@ -4622,7 +5102,8 @@ struct bigint {
     return byte_array;
   }
 
-  // 返回 mag 的无符号 byte 序列
+  // 返回 mag_ 的最短大端无符号 byte 序列
+  // 不包含符号 byte,数值为 0 时返回空数组
   jarray<std::uint8_t> mag_serialized_form() const {
     const std::int32_t len = mag_.length();
     const std::int32_t bit_len = len == 0 ? 0 : ((len - 1) << 5) + mutable_bigint::bit_length_for_limb(mag_[0]);
@@ -4645,17 +5126,19 @@ struct bigint {
     return result;
   }
 
-  // 返回低 32 bit.
+  // 返回当前值二进制补码表示的低 32 bit
+  // 高位被截断,结果可能丢失 magnitude 信息或具有不同符号
   std::int32_t to_int() const {
     return static_cast<std::int32_t>((get_int(0)));
   }
 
-  // 转为 32 位有符号整数; 截断为低 32 位.
+  // 将当前值转换为 std::int32_t,无法完整表示时仅保留低 32 bit
   std::int32_t int_value() const {
     return to_int();
   }
 
-  // 返回低 64 bit.
+  // 返回当前值二进制补码表示的低 64 bit
+  // 高位被截断,结果可能丢失 magnitude 信息或具有不同符号
   std::int64_t to_long() const {
     std::uint64_t result = 0;
     for (std::int32_t i = 1; i >= 0; --i) {
@@ -4664,12 +5147,13 @@ struct bigint {
     return static_cast<std::int64_t>((result));
   }
 
-  // 转为 long; 截断为低 64 位.
+  // 将当前值转换为 std::int64_t,无法完整表示时仅保留低 64 bit
   std::int64_t long_value() const {
     return to_long();
   }
 
-  // 转为 float
+  // 将当前值转换为 float,按 IEEE 754 nearest-even 规则舍入
+  // magnitude 过大时返回具有相同符号的 infinity,有限结果也可能丢失精度
   float to_float() const {
     if (signum_ == 0) {
       return 0.0f;
@@ -4718,12 +5202,13 @@ struct bigint {
     return result;
   }
 
-  // 转为 float
+  // 将当前值转换为 float,语义与 to_float() 相同
   float float_value() const {
     return to_float();
   }
 
-  // 转为 double
+  // 将当前值转换为 double,按 IEEE 754 nearest-even 规则舍入
+  // magnitude 过大时返回具有相同符号的 infinity,有限结果也可能丢失精度
   double to_double() const {
     if (signum_ == 0) {
       return 0.0;
@@ -4777,12 +5262,13 @@ struct bigint {
     return result;
   }
 
-  // 转为 double
+  // 将当前值转换为 double,语义与 to_double() 相同
   double double_value() const {
     return to_double();
   }
 
-  // 精确转换为 std::int64_t;超出范围时抛异常.
+  // 将当前值精确转换为 std::int64_t
+  // 超出 std::int64_t 可表示范围时抛出 std::runtime_error
   std::int64_t to_long_exact() const {
     if (mag_.length() <= 2 && bit_length() <= 63) {
       return to_long();
@@ -4790,12 +5276,13 @@ struct bigint {
     throw std::runtime_error("out of long range");
   }
 
-  // 精确转为 long.
+  // 将当前值精确转换为 std::int64_t,语义与 to_long_exact() 相同
   std::int64_t long_value_exact() const {
     return to_long_exact();
   }
 
-  // 精确转换为 std::int32_t;超出范围时抛异常.
+  // 将当前值精确转换为 std::int32_t
+  // 超出 std::int32_t 可表示范围时抛出 std::runtime_error
   std::int32_t to_int_exact() const {
     if (mag_.length() <= 1 && bit_length() <= 31) {
       return to_int();
@@ -4803,12 +5290,13 @@ struct bigint {
     throw std::runtime_error("out of int range");
   }
 
-  // 精确转为 32 位有符号整数.
+  // 将当前值精确转换为 std::int32_t,语义与 to_int_exact() 相同
   std::int32_t int_value_exact() const {
     return to_int_exact();
   }
 
-  // 精确转换为 std::int16_t;超出范围时抛异常.
+  // 将当前值精确转换为 std::int16_t
+  // 超出 std::int16_t 可表示范围时抛出 std::runtime_error
   std::int16_t to_short_exact() const {
     if (mag_.length() <= 1 && bit_length() <= 31) {
       const std::int32_t value = to_int();
@@ -4819,12 +5307,13 @@ struct bigint {
     throw std::runtime_error("out of short range");
   }
 
-  // 精确转为 short
+  // 将当前值精确转换为 std::int16_t,语义与 to_short_exact() 相同
   std::int16_t short_value_exact() const {
     return to_short_exact();
   }
 
-  // 精确转换为 std::int8_t;超出范围时抛异常.
+  // 将当前值精确转换为 std::int8_t
+  // 超出 std::int8_t 可表示范围时抛出 std::runtime_error
   std::int8_t to_byte_exact() const {
     if (mag_.length() <= 1 && bit_length() <= 31) {
       const std::int32_t value = to_int();
@@ -4835,45 +5324,50 @@ struct bigint {
     throw std::runtime_error("out of byte range");
   }
 
-  // 精确转为 byte
+  // 将当前值精确转换为 std::int8_t,语义与 to_byte_exact() 相同
   std::int8_t byte_value_exact() const {
     return to_byte_exact();
   }
 
-  // 返回当前 magnitude 拷贝为 mutable_bigint.
+  // 返回当前绝对值的 mutable_bigint 副本,不保留符号
   mutable_bigint to_mutable() const {
     return mutable_bigint(mag_);
   }
 
-  // 从 mutable_bigint 和符号构造规范 bigint.
+  // 接管 mutable_bigint 的 magnitude 并使用 sign 构造规范 bigint
+  // 零 magnitude 始终返回 ZERO,非零时调用方负责保证 sign 为 -1 或 1
   static bigint from_mutable(mutable_bigint&& value, std::int32_t sign) {
     value.normalize();
     if (value.is_zero()) {
       return ZERO;
     }
-    return bigint(sign, value.get_magnitude_array());
+    value.get_magnitude_array();
+    return bigint(sign, std::move(value.value_));
   }
 
-  // 检查子区间是否满足 from/index/size 边界约束.
+  // 检查 [off, off + len) 是否为 array_len 范围内的有效子区间
+  // 任一参数为负或区间越界时抛出 std::out_of_range
   static void check_from_index_size(std::int32_t off, std::int32_t len, std::int32_t array_len) {
     if (off < 0 || len < 0 || off > array_len || len > array_len - off) {
       throw std::out_of_range("index out of bounds");
     }
   }
 
-  // 检查 bigint 支持范围.
+  // 检查当前 magnitude 是否超过 bigint 支持的最大 bit 长度
+  // 超出范围时通过 report_overflow() 抛出异常
   void check_range() const {
     if (mag_.length() > MAX_MAG_LENGTH || (mag_.length() == MAX_MAG_LENGTH && (mag_[0] & 0x80000000U) != 0)) {
       report_overflow();
     }
   }
 
-  // 抛出 bigint 超出支持范围时的 overflow 异常.
+  // 抛出表示 bigint 超出支持范围的 std::runtime_error
   static void report_overflow() {
     throw std::runtime_error("would overflow supported range");
   }
 
-  // ASCII 字符 digit 实现,支持 radix 2..36.
+  // 将 ASCII 数字或字母转换为 radix 进制数字值
+  // ch 不是有效数字或数值不小于 radix 时返回 -1
   static std::int32_t digit(char ch, std::int32_t radix) {
     std::int32_t value = -1;
     const unsigned char c = static_cast<unsigned char>((ch));
@@ -4887,7 +5381,8 @@ struct bigint {
     return value >= 0 && value < radix ? value : -1;
   }
 
-  // 解析 [start, end) 内的一组 radix 数字,非法字符时报错.
+  // 将 source[start, end) 解析为一个不超过 std::uint32_t 的 radix 进制数字组
+  // 遇到非法字符时抛出 std::invalid_argument
   static std::uint32_t parse_group(const std::string& source, std::int32_t start, std::int32_t end,
                                    std::int32_t radix) {
     std::uint32_t result = 0;
@@ -4901,7 +5396,8 @@ struct bigint {
     return result;
   }
 
-  // 解析十进制字符片段
+  // 将 source[start, end) 解析为一个不超过 std::uint32_t 的十进制数字组
+  // 遇到非十进制字符时抛出 std::invalid_argument
   static std::uint32_t parse_int_decimal(const std::string& source, std::int32_t start, std::int32_t end) {
     std::int32_t result = digit(source[static_cast<size_t>((start++))], 10);
     if (result == -1) {
@@ -4917,7 +5413,8 @@ struct bigint {
     return static_cast<std::uint32_t>((result));
   }
 
-  // 去掉大端 limb 数组中的前导零,返回新数组.
+  // 复制大端 limb 数组并移除所有前导零
+  // 输入全为零时返回空数组
   static jarray<std::uint32_t> strip_leading_zero_limbs(const jarray<std::uint32_t>& val) {
     std::int32_t keep = 0;
     while (keep < val.length() && val[keep] == 0) {
@@ -4926,7 +5423,8 @@ struct bigint {
     return val.copy_of_range(keep, val.length());
   }
 
-  // 去掉前导零;源数组可信时仍按值返回,便于保持不可变语义.
+  // 从可信大端 limb 数组构造规范 magnitude
+  // 即使输入已规范化也返回独立副本,以保持 bigint 的不可变值语义
   static jarray<std::uint32_t> trusted_strip_leading_zero_limbs(const jarray<std::uint32_t>& val) {
     std::int32_t keep = 0;
     while (keep < val.length() && val[keep] == 0) {
@@ -4935,13 +5433,25 @@ struct bigint {
     return keep == 0 ? val.clone() : val.copy_of_range(keep, val.length());
   }
 
-  // 将大端 byte 子数组转换为规范 magnitude limb 数组.
+  // 从可信大端临时数组构造规范 magnitude
+  // 已规范化时直接接管存储,否则返回去除前导零后的子数组
+  static jarray<std::uint32_t> trusted_strip_leading_zero_limbs(jarray<std::uint32_t>&& val) {
+    std::int32_t keep = 0;
+    while (keep < val.length() && val[keep] == 0) {
+      ++keep;
+    }
+    return keep == 0 ? std::move(val) : val.copy_of_range(keep, val.length());
+  }
+
+  // 将大端无符号 byte 子数组 a[from, from + len) 转换为规范 magnitude
+  // 前导零 byte 被忽略,输入为零时返回空数组
   static jarray<std::uint32_t> strip_leading_zero_bytes(const jarray<std::uint8_t>& a, std::int32_t from,
                                                         std::int32_t len) {
     return strip_leading_zero_bytes(-129, a, from, len);
   }
 
-  // 返回去掉前导 0 byte 后的 magnitude;b < -128 表示尚未读取 a[from].
+  // 将大端无符号 byte 子数组转换为规范 magnitude
+  // b 表示已读取的首 byte,b < -128 时由函数读取 a[from]
   static jarray<std::uint32_t> strip_leading_zero_bytes(std::int32_t b, const jarray<std::uint8_t>& a,
                                                         std::int32_t from, std::int32_t len) {
     if (len == 0) {
@@ -4978,12 +5488,13 @@ struct bigint {
     return result;
   }
 
-  // 将负数二进制补码 byte 子数组转换为其绝对值 magnitude.
+  // 将负数的大端二进制补码 byte 子数组转换为规范的绝对值 magnitude
   static jarray<std::uint32_t> make_positive_bytes(const jarray<std::uint8_t>& a, std::int32_t from, std::int32_t len) {
     return make_positive_bytes(static_cast<std::int8_t>((a[from])), a, from, len);
   }
 
-  // 将负数二进制补码 byte 子数组转换为其绝对值 magnitude;b 是已读取的 a[from].
+  // 将负数的大端二进制补码 byte 子数组转换为规范的绝对值 magnitude
+  // b 是调用方已读取并完成符号扩展的 a[from]
   static jarray<std::uint32_t> make_positive_bytes(std::int32_t b, const jarray<std::uint8_t>& a, std::int32_t from,
                                                    std::int32_t len) {
     const std::int32_t to = from + len;
@@ -5034,7 +5545,7 @@ struct bigint {
     return result;
   }
 
-  // 将负数二进制补码 limb 数组转换为其绝对值 magnitude.
+  // 将负数的大端二进制补码 limb 数组转换为规范的绝对值 magnitude
   static jarray<std::uint32_t> make_positive_limbs(const jarray<std::uint32_t>& a) {
     std::int32_t keep = 0;
     std::int32_t j = 0;
@@ -5057,7 +5568,8 @@ struct bigint {
     return result;
   }
 
-  // x = x*y + z,原地更新大端 limb 数组.
+  // 原地计算 x = x * y + z,其中 x 是大端无符号 magnitude
+  // 调用方必须保证结果能够放入 x 的现有长度
   static void destructive_mul_add(jarray<std::uint32_t>& x, std::uint32_t y, std::uint32_t z) {
     const std::uint64_t ylong = y & 0xffffffffULL;
     const std::uint64_t zlong = z & 0xffffffffULL;
@@ -5079,7 +5591,8 @@ struct bigint {
     }
   }
 
-  // 单 limb 乘法
+  // 将非负 magnitude x 乘以单 limb y,并使用 sign 构造结果
+  // y == 0 时返回 ZERO
   static bigint multiply_by_int(const jarray<std::uint32_t>& x, std::uint32_t y, std::int32_t sign) {
     if (decimal_detail::population_count(y) == 1) {
       return bigint(sign, shift_left_mag(x, mutable_bigint::number_of_trailing_zeros(y)));
@@ -5103,7 +5616,8 @@ struct bigint {
     return bigint(sign, std::move(rmag));
   }
 
-  // 多 limb 标准乘法入口
+  // 使用 O(xlen * ylen) 标准乘法计算两个大端 magnitude 的乘积
+  // z 非空时作为可复用结果缓冲区
   static jarray<std::uint32_t> multiply_to_len(const jarray<std::uint32_t>& x, std::int32_t xlen,
                                                const jarray<std::uint32_t>& y, std::int32_t ylen,
                                                jarray<std::uint32_t>* z) {
@@ -5112,41 +5626,55 @@ struct bigint {
     return impl_multiply_to_len(x, xlen, y, ylen, z);
   }
 
-  // 多 limb 标准乘法实现
+  // multiply_to_len() 的无重复参数检查实现
   static jarray<std::uint32_t> impl_multiply_to_len(const jarray<std::uint32_t>& x, std::int32_t xlen,
                                                     const jarray<std::uint32_t>& y, std::int32_t ylen,
                                                     jarray<std::uint32_t>* z) {
-    const std::int32_t xstart = xlen - 1;
-    const std::int32_t ystart = ylen - 1;
-
     jarray<std::uint32_t> local;
     if (z == nullptr || z->length() < xlen + ylen) {
       local = jarray<std::uint32_t>(xlen + ylen);
       z = &local;
     }
+    impl_multiply_to_len_into(x, xlen, y, ylen, *z);
+    return z == &local ? std::move(local) : z->clone();
+  }
+
+  // 使用标准多 limb 乘法将乘积直接写入 z
+  // z 必须至少包含 xlen + ylen 个 limb
+  static void impl_multiply_to_len_into(const jarray<std::uint32_t>& x, std::int32_t xlen,
+                                        const jarray<std::uint32_t>& y, std::int32_t ylen, jarray<std::uint32_t>& z) {
+    const std::int32_t required = xlen + ylen;
+    if (z.length() < required) {
+      z.alloc(required);
+    }
+    const std::int32_t xstart = xlen - 1;
+    const std::int32_t ystart = ylen - 1;
 
     std::uint64_t carry = 0;
     for (std::int32_t j = ystart, k = ystart + 1 + xstart; j >= 0; --j, --k) {
       const std::uint64_t product = (y[j] & 0xffffffffULL) * (x[xstart] & 0xffffffffULL) + carry;
-      (*z)[k] = static_cast<std::uint32_t>((product));
+      z[k] = static_cast<std::uint32_t>((product));
       carry = product >> 32;
     }
-    (*z)[xstart] = static_cast<std::uint32_t>((carry));
+    z[xstart] = static_cast<std::uint32_t>((carry));
 
     for (std::int32_t i = xstart - 1; i >= 0; --i) {
+      if (x[i] == 0) {
+        z[i] = 0;
+        continue;
+      }
       carry = 0;
       for (std::int32_t j = ystart, k = ystart + 1 + i; j >= 0; --j, --k) {
-        const std::uint64_t product =
-            (y[j] & 0xffffffffULL) * (x[i] & 0xffffffffULL) + ((*z)[k] & 0xffffffffULL) + carry;
-        (*z)[k] = static_cast<std::uint32_t>((product));
+        const std::uint64_t product = (y[j] & 0xffffffffULL) * (x[i] & 0xffffffffULL) + (z[k] & 0xffffffffULL) + carry;
+        z[k] = static_cast<std::uint32_t>((product));
         carry = product >> 32;
       }
-      (*z)[i] = static_cast<std::uint32_t>((carry));
+      z[i] = static_cast<std::uint32_t>((carry));
     }
-    return z->clone();
   }
 
-  // multiplyToLen 的参数检查.
+  // 检查标准乘法使用的数组长度参数
+  // length 超过 array.length() 时抛出 std::out_of_range,非正长度直接接受
   static void multiply_to_len_check(const jarray<std::uint32_t>& array, std::int32_t length) {
     if (length <= 0) {
       return;
@@ -5156,7 +5684,8 @@ struct bigint {
     }
   }
 
-  // 返回 magnitude << n
+  // 返回大端非负 magnitude 左移 n bit 后的规范数组
+  // n 按无符号移位距离处理
   static jarray<std::uint32_t> shift_left_mag(const jarray<std::uint32_t>& mag, std::int32_t n) {
     const std::int32_t n_ints = static_cast<std::int32_t>((static_cast<std::uint32_t>((n)) >> 5));
     const std::int32_t n_bits = n & 0x1f;
@@ -5183,7 +5712,8 @@ struct bigint {
     return new_mag;
   }
 
-  // shiftLeft 的 limb 合并循环.
+  // 将 old_arr 相邻 limb 按 shift_count 合并并写入 new_arr
+  // 用于 shift_left_mag(),调用方负责保证数组区间和移位范围有效
   static void shift_left_impl_worker(jarray<std::uint32_t>& new_arr, const jarray<std::uint32_t>& old_arr,
                                      std::int32_t new_idx, std::int32_t shift_count, std::int32_t num_iter) {
     const std::int32_t shift_count_right = 32 - shift_count;
@@ -5195,7 +5725,8 @@ struct bigint {
     }
   }
 
-  // shiftRightImpl 的 limb 合并循环.
+  // 将 old_arr 相邻 limb 按 shift_count 合并并写入 new_arr
+  // 用于 shift_right_impl(),调用方负责保证数组区间和移位范围有效
   static void shift_right_impl_worker(jarray<std::uint32_t>& new_arr, const jarray<std::uint32_t>& old_arr,
                                       std::int32_t new_idx, std::int32_t shift_count, std::int32_t num_iter) {
     const std::int32_t shift_count_left = 32 - shift_count;
@@ -5208,7 +5739,8 @@ struct bigint {
     }
   }
 
-  // 对 magnitude.
+  // 将大端无符号 magnitude 加 1 并返回结果
+  // 发生最高位进位时扩展一个 limb
   static jarray<std::uint32_t> java_increment(jarray<std::uint32_t> val) {
     std::uint32_t last_sum = 0;
     for (std::int32_t i = val.length() - 1; i >= 0 && last_sum == 0; --i) {
@@ -5222,7 +5754,8 @@ struct bigint {
     return val;
   }
 
-  // 计算前 len 个 limb 的 bitLength,假定无前导零.
+  // 返回 val 前 len 个大端 limb 的 bit 长度
+  // 调用方必须保证 len == 0 或 val[0] 非零
   static std::int32_t bit_length(const jarray<std::uint32_t>& val, std::int32_t len) {
     if (len == 0) {
       return 0;
@@ -5230,12 +5763,13 @@ struct bigint {
     return ((len - 1) << 5) + mutable_bigint::bit_length_for_limb(val[0]);
   }
 
-  // 平方入口
+  // 返回 this^2,根据 magnitude 规模选择标准、Karatsuba 或 Toom-Cook 平方
   bigint square() const {
     return square(false);
   }
 
-  // 平方;递归调用时跳过部分溢出检查.
+  // square() 的递归实现入口
+  // is_recursion 为 true 时跳过仅需在最外层执行的部分范围检查
   bigint square(bool is_recursion) const {
     if (signum_ == 0) {
       return ZERO;
@@ -5244,7 +5778,7 @@ struct bigint {
 
     if (len < KARATSUBA_SQUARE_THRESHOLD) {
       jarray<std::uint32_t> z = square_to_len(mag_, len, nullptr);
-      return bigint(1, trusted_strip_leading_zero_limbs(z));
+      return bigint(1, trusted_strip_leading_zero_limbs(std::move(z)));
     }
     if (len < TOOM_COOK_SQUARE_THRESHOLD) {
       return square_karatsuba();
@@ -5258,7 +5792,8 @@ struct bigint {
     return square_toom_cook3();
   }
 
-  // 平方标准算法入口
+  // 使用标准 O(len^2) 算法计算大端 magnitude x 的平方
+  // z 非空时作为可复用结果缓冲区
   static jarray<std::uint32_t> square_to_len(const jarray<std::uint32_t>& x, std::int32_t len,
                                              jarray<std::uint32_t>* z) {
     const std::int32_t zlen = len << 1;
@@ -5271,7 +5806,8 @@ struct bigint {
     return impl_square_to_len(x, len, *z, zlen);
   }
 
-  // squareToLen 参数检查.
+  // 检查标准平方使用的输入长度和可选结果缓冲区
+  // 参数越界或 z 容量不足时抛出 std::invalid_argument
   static void impl_square_to_len_checks(const jarray<std::uint32_t>& x, std::int32_t len,
                                         const jarray<std::uint32_t>& z, std::int32_t zlen) {
     if (len < 1) {
@@ -5291,9 +5827,17 @@ struct bigint {
     }
   }
 
-  // Colin Plumb 平方算法
+  // 使用 Colin Plumb 的多精度平方算法计算 x 前 len 个 limb 的平方
   static jarray<std::uint32_t> impl_square_to_len(const jarray<std::uint32_t>& x, std::int32_t len,
                                                   jarray<std::uint32_t>& z, std::int32_t zlen) {
+    impl_square_to_len_into(x, len, z, zlen);
+    return z.clone();
+  }
+
+  // 使用标准多 limb 平方将结果直接写入 z
+  // z 必须至少包含 2 * len 个 limb
+  static void impl_square_to_len_into(const jarray<std::uint32_t>& x, std::int32_t len, jarray<std::uint32_t>& z,
+                                      std::int32_t zlen) {
     std::uint32_t last_product_low_word = 0;
     for (std::int32_t j = 0, i = 0; j < len; ++j) {
       const std::uint64_t piece = x[j] & 0xffffffffULL;
@@ -5305,16 +5849,19 @@ struct bigint {
 
     for (std::int32_t i = len, offset = 1; i > 0; --i, offset += 2) {
       const std::uint32_t t0 = x[i - 1];
+      if (t0 == 0) {
+        continue;
+      }
       const std::uint32_t t = mul_add(z, x, offset, i - 1, t0);
       add_one(z, offset - 1, i, t);
     }
 
     primitive_left_shift(z, zlen, 1);
     z[zlen - 1] |= x[len - 1] & 1U;
-    return z.clone();
   }
 
-  // 左移数组 a 的前 len 个 limb
+  // 将大端数组 a 的前 len 个 limb 左移 n bit 并返回结果
+  // n 必须非负,结果会按整 limb 位移和最高位进位扩展
   static jarray<std::uint32_t> left_shift(jarray<std::uint32_t> a, std::int32_t len, std::int32_t n) {
     const std::int32_t n_ints = static_cast<std::int32_t>((static_cast<std::uint32_t>((n)) >> 5));
     const std::int32_t n_bits = n & 0x1f;
@@ -5337,13 +5884,15 @@ struct bigint {
     return result;
   }
 
-  // 原位右移 n bit,0<n<32
+  // 将大端数组 a 的前 len 个 limb 原地右移 n bit
+  // 调用方必须保证 0 < n < 32
   static void primitive_right_shift(jarray<std::uint32_t>& a, std::int32_t len, std::int32_t n) {
     shift_right_impl_worker(a, a, 1, n, len - 1);
     a[0] >>= n;
   }
 
-  // 原位左移 n bit,0<=n<32
+  // 将大端数组 a 的前 len 个 limb 原地左移 n bit
+  // 调用方必须保证 0 <= n < 32 且不需要额外最高 limb
   static void primitive_left_shift(jarray<std::uint32_t>& a, std::int32_t len, std::int32_t n) {
     if (len == 0 || n == 0) {
       return;
@@ -5352,14 +5901,16 @@ struct bigint {
     a[len - 1] <<= n;
   }
 
-  // out += in * k,返回 carry
+  // 将 in 的最低 len 个 limb 乘以单 limb k,并累加到 out 的指定低位区间
+  // 原地更新 out 并返回最高进位
   static std::uint32_t mul_add(jarray<std::uint32_t>& out, const jarray<std::uint32_t>& in, std::int32_t offset,
                                std::int32_t len, std::uint32_t k) {
     impl_mul_add_check(out, in, offset, len);
     return impl_mul_add(out, in, offset, len, k);
   }
 
-  // mulAdd 参数检查.
+  // 检查 mul_add() 的输入长度、输出偏移和数组容量
+  // 任一范围无效时抛出 std::invalid_argument
   static void impl_mul_add_check(const jarray<std::uint32_t>& out, const jarray<std::uint32_t>& in, std::int32_t offset,
                                  std::int32_t len) {
     if (len > in.length()) {
@@ -5376,7 +5927,7 @@ struct bigint {
     }
   }
 
-  // mulAdd 实现.
+  // mul_add() 的无重复参数检查实现,原地更新 out 并返回最高进位
   static std::uint32_t impl_mul_add(jarray<std::uint32_t>& out, const jarray<std::uint32_t>& in, std::int32_t offset,
                                     std::int32_t len, std::uint32_t k) {
     const std::uint64_t k_long = k & 0xffffffffULL;
@@ -5391,7 +5942,8 @@ struct bigint {
     return static_cast<std::uint32_t>((carry));
   }
 
-  // 向 a 的内部片段加一个 word,返回最终 carry
+  // 从 a 的指定低位片段开始加上 carry 并向高位传播
+  // 返回传播出目标片段的最终进位
   static std::uint32_t add_one(jarray<std::uint32_t>& a, std::int32_t offset, std::int32_t mlen, std::uint32_t carry) {
     offset = a.length() - 1 - mlen - offset;
     std::uint64_t t = (a[offset] & 0xffffffffULL) + (carry & 0xffffffffULL);
@@ -5412,7 +5964,8 @@ struct bigint {
     return 1;
   }
 
-  // Montgomery 乘法包装
+  // 返回 a * b * R^(-1) mod n 的 Montgomery 乘积
+  // a、b 和 n 使用等长大端 magnitude,product 可作为可复用工作数组
   static jarray<std::uint32_t> montgomery_multiply(const jarray<std::uint32_t>& a, const jarray<std::uint32_t>& b,
                                                    const jarray<std::uint32_t>& n, std::int32_t len, std::uint64_t inv,
                                                    jarray<std::uint32_t>* product) {
@@ -5425,7 +5978,8 @@ struct bigint {
     return impl_montgomery_multiply(a, b, n, len, inv, materialized);
   }
 
-  // Montgomery 平方包装
+  // 返回 a^2 * R^(-1) mod n 的 Montgomery 平方
+  // a 和 n 使用等长大端 magnitude,product 可作为可复用工作数组
   static jarray<std::uint32_t> montgomery_square(const jarray<std::uint32_t>& a, const jarray<std::uint32_t>& n,
                                                  std::int32_t len, std::uint64_t inv, jarray<std::uint32_t>* product) {
     impl_montgomery_multiply_checks(a, a, n, len, product);
@@ -5437,7 +5991,34 @@ struct bigint {
     return impl_montgomery_square(a, n, len, inv, materialized);
   }
 
-  // Montgomery 参数检查.
+  // 计算 Montgomery 乘积并将约减结果写入 product 的前 len 个 limb
+  // product 会调整为 2 * len 个 limb 以容纳乘法工作值
+  static void montgomery_multiply_into(const jarray<std::uint32_t>& a, const jarray<std::uint32_t>& b,
+                                       const jarray<std::uint32_t>& n, std::int32_t len, std::uint64_t inv,
+                                       jarray<std::uint32_t>& product) {
+    if (product.length() != (len << 1)) {
+      product.alloc(len << 1);
+    }
+    impl_montgomery_multiply_checks(a, b, n, len, &product);
+    impl_multiply_to_len_into(a, len, b, len, product);
+    mont_reduce_in_place(product, n, len, static_cast<std::uint32_t>(inv));
+  }
+
+  // 计算 Montgomery 平方并将约减结果写入 product 的前 len 个 limb
+  // product 会调整为 2 * len 个 limb 以容纳平方工作值
+  static void montgomery_square_into(const jarray<std::uint32_t>& a, const jarray<std::uint32_t>& n, std::int32_t len,
+                                     std::uint64_t inv, jarray<std::uint32_t>& product) {
+    if (product.length() != (len << 1)) {
+      product.alloc(len << 1);
+    }
+    impl_montgomery_multiply_checks(a, a, n, len, &product);
+    const std::int32_t product_len = len << 1;
+    impl_square_to_len_into(a, len, product, product_len);
+    mont_reduce_in_place(product, n, len, static_cast<std::uint32_t>(inv));
+  }
+
+  // 检查 Montgomery 运算的数组长度、偶数 limb 数和缓冲区容量
+  // 参数无效时抛出 std::invalid_argument
   static void impl_montgomery_multiply_checks(const jarray<std::uint32_t>& a, const jarray<std::uint32_t>& b,
                                               const jarray<std::uint32_t>& n, std::int32_t len,
                                               const jarray<std::uint32_t>* product) {
@@ -5452,7 +6033,8 @@ struct bigint {
     }
   }
 
-  // 确保 Montgomery product 数组存在且至少有 len 个元素.
+  // 返回容量至少为 len 的 Montgomery 工作数组
+  // z 为空或容量不足时分配新数组,否则复制 z 的现有内容
   static jarray<std::uint32_t> materialize(const jarray<std::uint32_t>* z, std::int32_t len) {
     if (z == nullptr || z->length() < len) {
       return jarray<std::uint32_t>(len);
@@ -5460,7 +6042,7 @@ struct bigint {
     return z->clone();
   }
 
-  // Montgomery 乘法实现.
+  // 使用标准乘法和 Montgomery reduction 实现 a * b * R^(-1) mod n
   static jarray<std::uint32_t> impl_montgomery_multiply(const jarray<std::uint32_t>& a, const jarray<std::uint32_t>& b,
                                                         const jarray<std::uint32_t>& n, std::int32_t len,
                                                         std::uint64_t inv, jarray<std::uint32_t>& product) {
@@ -5468,7 +6050,7 @@ struct bigint {
     return mont_reduce(product, n, len, static_cast<std::uint32_t>((inv)));
   }
 
-  // Montgomery 平方实现.
+  // 使用标准平方和 Montgomery reduction 实现 a^2 * R^(-1) mod n
   static jarray<std::uint32_t> impl_montgomery_square(const jarray<std::uint32_t>& a, const jarray<std::uint32_t>& n,
                                                       std::int32_t len, std::uint64_t inv,
                                                       jarray<std::uint32_t>& product) {
@@ -5476,9 +6058,18 @@ struct bigint {
     return mont_reduce(product, n, len, static_cast<std::uint32_t>((inv)));
   }
 
-  // Montgomery reduce
+  // 将 Montgomery 工作值 n 约减为 n * R^(-1) mod mod
+  // 结果写在返回数组的前 mlen 个 limb,数组保留原工作区长度
   static jarray<std::uint32_t> mont_reduce(jarray<std::uint32_t> n, const jarray<std::uint32_t>& mod, std::int32_t mlen,
                                            std::uint32_t inv) {
+    mont_reduce_in_place(n, mod, mlen, inv);
+    return n;
+  }
+
+  // 对工作数组 n 原地执行 Montgomery reduction
+  // n 必须有 2 * mlen 个 limb,mod 必须有 mlen 个 limb
+  static void mont_reduce_in_place(jarray<std::uint32_t>& n, const jarray<std::uint32_t>& mod, std::int32_t mlen,
+                                   std::uint32_t inv) {
     std::int32_t c = 0;
     std::int32_t len = mlen;
     std::int32_t offset = 0;
@@ -5497,10 +6088,10 @@ struct bigint {
     while (int_array_cmp_to_len(n, mod, mlen) >= 0) {
       sub_n(n, mod, mlen);
     }
-    return n;
   }
 
-  // 比较两个大端无符号数组的前 len 个元素.
+  // 按无符号数值比较两个大端数组的前 len 个 limb
+  // arg1 小于、等于或大于 arg2 时分别返回 -1、0 或 1
   static std::int32_t int_array_cmp_to_len(const jarray<std::uint32_t>& arg1, const jarray<std::uint32_t>& arg2,
                                            std::int32_t len) {
     for (std::int32_t i = 0; i < len; ++i) {
@@ -5516,7 +6107,8 @@ struct bigint {
     return 0;
   }
 
-  // 同长数组相减,返回 borrow.
+  // 原地计算 a[0, len) -= b[0, len)
+  // 两个数组按大端无符号 magnitude 解释,返回最终借位
   static std::int32_t sub_n(jarray<std::uint32_t>& a, const jarray<std::uint32_t>& b, std::int32_t len) {
     std::int64_t sum = 0;
     while (--len >= 0) {
@@ -5527,7 +6119,8 @@ struct bigint {
     return static_cast<std::int32_t>((sum >> 32));
   }
 
-  // Karatsuba 平方
+  // 使用 Karatsuba 分治算法返回当前值的平方
+  // 调用方在 magnitude 达到 KARATSUBA_SQUARE_THRESHOLD 后选择此路径
   bigint square_karatsuba() const {
     const std::int32_t half = (mag_.length() + 1) / 2;
     const bigint xl = get_lower(half);
@@ -5539,7 +6132,8 @@ struct bigint {
     return xhs.shift_left(half * 32).add(xl.add(xh).square().subtract(xhs.add(xls))).shift_left(half * 32).add(xls);
   }
 
-  // Toom-Cook 3 路平方
+  // 使用 Toom-Cook 3 路分治与插值算法返回当前值的平方
+  // 调用方在 magnitude 达到 TOOM_COOK_SQUARE_THRESHOLD 后选择此路径
   bigint square_toom_cook3() const {
     const std::int32_t len = mag_.length();
     const std::int32_t k = (len + 2) / 3;
@@ -5569,7 +6163,8 @@ struct bigint {
     return vinf.shift_left(ss).add(t2).shift_left(ss).add(t1).shift_left(ss).add(tm1).shift_left(ss).add(v0);
   }
 
-  // Karatsuba 乘法
+  // 使用 Karatsuba 分治算法返回 x * y
+  // 输入可以带符号,结果符号由两个操作数共同确定
   static bigint multiply_karatsuba(const bigint& x, const bigint& y) {
     const std::int32_t xlen = x.mag_.length();
     const std::int32_t ylen = y.mag_.length();
@@ -5593,7 +6188,8 @@ struct bigint {
     return result;
   }
 
-  // Toom-Cook 3 路乘法
+  // 使用 Toom-Cook 3 路分治与插值算法返回 a * b
+  // 输入可以带符号,结果符号由两个操作数共同确定
   static bigint multiply_toom_cook3(const bigint& a, const bigint& b) {
     const std::int32_t alen = a.mag_.length();
     const std::int32_t blen = b.mag_.length();
@@ -5636,7 +6232,8 @@ struct bigint {
     return result;
   }
 
-  // magnitude + std::uint64_t,返回新 magnitude.
+  // 返回大端非负 magnitude x 与无符号 64 位 val 的和
+  // 输入保持不变,最高位进位时结果增加一个 limb
   static jarray<std::uint32_t> add_magnitude(const jarray<std::uint32_t>& x, std::uint64_t val) {
     std::int32_t x_index = x.length();
     jarray<std::uint32_t> result;
@@ -5680,7 +6277,8 @@ struct bigint {
     return result;
   }
 
-  // 两个 magnitude 相加,返回新 magnitude.
+  // 返回两个大端非负 magnitude 的和
+  // 输入保持不变,最高位进位时结果增加一个 limb
   static jarray<std::uint32_t> add_magnitude(const jarray<std::uint32_t>& xin, const jarray<std::uint32_t>& yin) {
     const jarray<std::uint32_t>* x = &xin;
     const jarray<std::uint32_t>* y = &yin;
@@ -5721,7 +6319,8 @@ struct bigint {
     return result;
   }
 
-  // std::uint64_t - magnitude,调用方保证 val >= little.
+  // 返回无符号 64 位 val 减去大端非负 magnitude little 的结果
+  // 调用方必须保证 val >= little 且 little 最多包含两个 limb
   static jarray<std::uint32_t> subtract_magnitude(std::uint64_t val, const jarray<std::uint32_t>& little) {
     const std::uint32_t high_word = static_cast<std::uint32_t>((val >> 32));
     if (high_word == 0) {
@@ -5745,7 +6344,8 @@ struct bigint {
     return result;
   }
 
-  // magnitude - std::uint64_t,调用方保证 big >= val.
+  // 返回大端非负 magnitude big 减去无符号 64 位 val 的结果
+  // 调用方必须保证 big >= val
   static jarray<std::uint32_t> subtract_magnitude(const jarray<std::uint32_t>& big, std::uint64_t val) {
     const std::uint32_t high_word = static_cast<std::uint32_t>((val >> 32));
     std::int32_t big_index = big.length();
@@ -5776,7 +6376,8 @@ struct bigint {
     return result;
   }
 
-  // big - little,调用方保证 big >= little.
+  // 返回两个大端非负 magnitude 的差 big - little
+  // 调用方必须保证 big >= little
   static jarray<std::uint32_t> subtract_magnitude(const jarray<std::uint32_t>& big,
                                                   const jarray<std::uint32_t>& little) {
     std::int32_t big_index = big.length();
@@ -5810,7 +6411,44 @@ inline const bigint bigint::TWO{2};
 inline const bigint bigint::TEN{10};
 inline const bigint bigint::NEGATIVE_ONE{-1};
 
-// 正小整数常量缓存.
+inline mutable_bigint::mutable_bigint(const bigint& val) : value_(val.mag_), int_len_(val.mag_.length()) {
+}
+
+inline bigint mutable_bigint::get_lower(std::int32_t n) {
+  if (is_zero()) {
+    return bigint::ZERO;
+  }
+  if (int_len_ < n) {
+    return to_bigint(1);
+  }
+
+  std::int32_t len = n;
+  while (len > 0 && value_[offset_ + int_len_ - len] == 0) {
+    --len;
+  }
+  if (len == 0) {
+    return bigint::ZERO;
+  }
+  return bigint(1, value_.copy_of_range(offset_ + int_len_ - len, offset_ + int_len_));
+}
+
+inline bigint mutable_bigint::to_bigint(std::int32_t sign) {
+  if (int_len_ == 0 || sign == 0) {
+    return bigint::ZERO;
+  }
+  return bigint(sign, get_magnitude_array());
+}
+
+inline bigint mutable_bigint::to_bigint() {
+  normalize();
+  return to_bigint(is_zero() ? 0 : 1);
+}
+
+inline std::string mutable_bigint::to_string() {
+  return to_bigint(1).to_string();
+}
+
+// 返回缓存中的正小整数 n,调用方必须保证 n 位于 [1, MAX_CONSTANT]
 inline bigint bigint::pos_const(std::int32_t n) {
   static const std::array<bigint, MAX_CONSTANT + 1> cache = [] {
     std::array<bigint, MAX_CONSTANT + 1> values{};
@@ -5824,7 +6462,7 @@ inline bigint bigint::pos_const(std::int32_t n) {
   return cache[static_cast<size_t>((n))];
 }
 
-// 负小整数常量缓存.
+// 返回缓存中的负小整数 -n,调用方必须保证 n 位于 [1, MAX_CONSTANT]
 inline bigint bigint::neg_const(std::int32_t n) {
   static const std::array<bigint, MAX_CONSTANT + 1> cache = [] {
     std::array<bigint, MAX_CONSTANT + 1> values{};
@@ -5839,29 +6477,34 @@ inline bigint bigint::neg_const(std::int32_t n) {
 }
 
 // bit_sieve
-// 用于寻找素数候选值的简单 bit 筛
+// bigint 素数搜索使用的固定长度候选筛
 //
-// 新筛的所有 bit 初始为 0;当一个候选数被判定为合数时,将对应 bit 置 1.
-// 筛中不表示偶数,每个 bit 表示一个奇数:
-// N = offset + (2 * index + 1)
+// 筛中只表示奇数以减少存储和筛选工作量
+// 对偶数基值 base,下标 index 对应的整数为 base + 2 * index + 1
+// bit 为 0 表示尚未排除的候选值,bit 为 1 表示该位置已被筛除
+//
+// 默认构造的小筛以 0 为基值,用于枚举筛选所需的小素数
+// 搜索筛利用这些小素数标记 base 之后的合数,但未标记的值仍只是 probable-prime 候选
+// retrieve() 会对候选值继续执行概率素性测试,筛本身不构成素数证明
 struct bit_sieve {
-  // 存储筛 bit.
+  // 存储筛 bit
   jarray<std::uint64_t> bits_;
 
-  // 筛持有的 bit 数量.
+  // 筛持有的 bit 数量
   std::int32_t length_{0};
 
-  // 构造 small_sieve:base 为 0,用于生成小素数集合.
+  // 构造以 0 为基值的共享小筛
+  // 筛长是性能折中值,用于生成后续搜索筛需要的小素数集合
   bit_sieve() {
     length_ = 150 * 64;
     bits_ = jarray<std::uint64_t>(unit_index(length_ - 1) + 1);
 
-    // 标记 1 为合数.
+    // 标记 1 为合数
     set(0);
     std::int32_t next_index = 1;
     std::int32_t next_prime = 3;
 
-    // 寻找素数并从筛中删除它们的倍数.
+    // 寻找素数并从筛中删除它们的倍数
     do {
       sieve_single(length_, next_index + next_prime, next_prime);
       next_index = sieve_search(length_, next_index + 1);
@@ -5869,56 +6512,59 @@ struct bit_sieve {
     } while ((next_index > 0) && (next_prime < length_));
   }
 
-  // 构造 searchLen 个 bit 的搜索筛;base 必须为偶数.
+  // 构造从偶数 base 之后开始、包含 search_len 个奇数候选的搜索筛
+  // 使用共享小筛中的素数预先标记候选区间内的合数
   bit_sieve(const bigint& base, std::int32_t search_len) {
     bits_ = jarray<std::uint64_t>(unit_index(search_len - 1) + 1);
     length_ = search_len;
     std::int32_t start = 0;
 
-    std::int32_t step = small_sieve().sieve_search(small_sieve().length_, start);
+    const bit_sieve& primes = small_sieve();
+    std::int32_t step = primes.sieve_search(primes.length_, start);
     std::int32_t converted_step = (step * 2) + 1;
 
-    // 在偶数 base 指定的偏移处构造大筛.
+    // 在偶数 base 指定的偏移处构造大筛
     do {
-      // 计算 base mod convertedStep.
+      // 计算 base mod convertedStep
       start = static_cast<std::int32_t>((base.mod_uint32(static_cast<std::uint32_t>((converted_step)))));
 
-      // 从筛中删除 step 的每个倍数.
+      // 从筛中删除 step 的每个倍数
       start = converted_step - start;
       if (start % 2 == 0) {
         start += converted_step;
       }
       sieve_single(search_len, (start - 1) / 2, converted_step);
 
-      // 从小筛中寻找下一个素数.
-      step = small_sieve().sieve_search(small_sieve().length_, step + 1);
+      // 从小筛中寻找下一个素数
+      step = primes.sieve_search(primes.length_, step + 1);
       converted_step = (step * 2) + 1;
     } while (step > 0);
   }
 
-  // 给定 bit index,返回包含它的 64-bit 单元下标.
+  // 返回 bit_index 所在的 64 位存储单元下标
   static std::int32_t unit_index(std::int32_t bit_index) {
     return static_cast<std::int32_t>((static_cast<std::uint32_t>((bit_index)) >> 6));
   }
 
-  // 返回能屏蔽指定 bit 的 64-bit 单元.
+  // 返回仅设置 bit_index 在其 64 位存储单元内对应位置的掩码
   static std::uint64_t bit(std::int32_t bit_index) {
     return std::uint64_t{1} << (bit_index & ((1 << 6) - 1));
   }
 
-  // 读取指定下标的 bit.
+  // 返回 bit_index 是否已被设置,即对应候选是否已被筛除
   bool get(std::int32_t bit_index) const {
     const std::int32_t index = unit_index(bit_index);
     return (bits_[index] & bit(bit_index)) != 0;
   }
 
-  // 设置指定下标的 bit.
+  // 设置 bit_index,将对应候选标记为已筛除
   void set(std::int32_t bit_index) {
     const std::int32_t index = unit_index(bit_index);
     bits_[index] |= bit(bit_index);
   }
 
-  // 返回 start 处或之后第一个清零 bit 的下标;不搜索超过 limit.
+  // 返回 [start, limit) 中第一个未设置 bit 的下标
+  // 范围内不存在候选或 start >= limit 时返回 -1
   std::int32_t sieve_search(std::int32_t limit, std::int32_t start) const {
     if (start >= limit) {
       return -1;
@@ -5934,7 +6580,8 @@ struct bit_sieve {
     return -1;
   }
 
-  // 从 start 开始,将 step 的每个倍数从筛中删除.
+  // 从 start 开始每隔 step 设置一个 bit,直到到达 limit
+  // 用于标记某个小素数在候选区间内的所有倍数
   void sieve_single(std::int32_t limit, std::int32_t start, std::int32_t step) {
     while (start < limit) {
       set(start);
@@ -5942,7 +6589,8 @@ struct bit_sieve {
     }
   }
 
-  // 在筛中测试 probable prime;找到则写入 out 并返回 true.
+  // 按升序对筛中未标记的候选执行 certainty 强度的 probable-prime 测试
+  // 找到候选时写入 out 并返回 true,遍历完整个筛仍未找到时返回 false
   bool retrieve(bigint& out, const bigint& init_value, std::int32_t certainty,
                 std::mt19937_64* random = nullptr) const {
     std::int32_t offset = 1;
@@ -5950,7 +6598,7 @@ struct bit_sieve {
       std::uint64_t next_long = ~bits_[i];
       for (std::int32_t j = 0; j < 64; ++j) {
         if ((next_long & 1U) == 1U) {
-          bigint candidate = init_value.add(bigint::value_of(offset));
+          bigint candidate = init_value.add(static_cast<std::int64_t>(offset));
           if (candidate.prime_to_certainty(certainty, random)) {
             out = std::move(candidate);
             return true;
@@ -5963,14 +6611,15 @@ struct bit_sieve {
     return false;
   }
 
-  // static small_sieve.
+  // 返回进程内惰性构造的共享小筛
   static const bit_sieve& small_sieve() {
     static const bit_sieve sieve;
     return sieve;
   }
 };
 
-// 返回指定 bitLength 的 probable prime
+// 使用 rnd 返回 bit_length 恰好等于指定值的正 probable prime
+// 使用 DEFAULT_PRIME_CERTAINTY 控制误判概率,bit_length < 2 时抛出 std::runtime_error
 inline bigint bigint::probable_prime(std::int32_t bit_length, std::mt19937_64& rnd) {
   if (bit_length < 2) {
     throw std::runtime_error("bit length < 2");
@@ -5979,7 +6628,8 @@ inline bigint bigint::probable_prime(std::int32_t bit_length, std::mt19937_64& r
                                             : large_prime(bit_length, DEFAULT_PRIME_CERTAINTY, rnd);
 }
 
-// 小 bitLength 的随机 probable prime 搜索
+// 搜索 bit_length 小于 SMALL_PRIME_THRESHOLD 的随机 probable prime
+// 先排除小素数因子,再按 certainty 执行概率素性测试
 inline bigint bigint::small_prime(std::int32_t bit_length, std::int32_t certainty, std::mt19937_64& rnd) {
   const std::int32_t mag_len = static_cast<std::int32_t>((static_cast<std::uint32_t>((bit_length + 31)) >> 5));
   jarray<std::uint32_t> temp(mag_len);
@@ -5997,7 +6647,7 @@ inline bigint bigint::small_prime(std::int32_t bit_length, std::int32_t certaint
 
     bigint p(1, temp);
     if (bit_length > 6) {
-      const std::int64_t r = p.remainder(small_prime_product()).long_value();
+      const std::uint64_t r = p.mod_small_prime_product();
       if ((r % 3 == 0) || (r % 5 == 0) || (r % 7 == 0) || (r % 11 == 0) || (r % 13 == 0) || (r % 17 == 0) ||
           (r % 19 == 0) || (r % 23 == 0) || (r % 29 == 0) || (r % 31 == 0) || (r % 37 == 0) || (r % 41 == 0)) {
         continue;
@@ -6013,7 +6663,8 @@ inline bigint bigint::small_prime(std::int32_t bit_length, std::int32_t certaint
   }
 }
 
-// 大 bitLength 的随机 probable prime 搜索
+// 搜索 bit_length 较大的随机 probable prime
+// 使用 bit_sieve 批量排除合数后对剩余候选执行概率素性测试
 inline bigint bigint::large_prime(std::int32_t bit_length, std::int32_t certainty, std::mt19937_64& rnd) {
   bigint p = random_bigint(bit_length, rnd).set_bit(bit_length - 1);
   p.mag_[p.mag_.length() - 1] &= 0xfffffffeU;
@@ -6024,7 +6675,7 @@ inline bigint bigint::large_prime(std::int32_t bit_length, std::int32_t certaint
   bool found = search_sieve.retrieve(candidate, p, certainty, &rnd);
 
   while (!found || candidate.bit_length() != bit_length) {
-    p = p.add(bigint::value_of(2LL * search_len));
+    p = p.add(2LL * search_len);
     if (p.bit_length() != bit_length) {
       p = random_bigint(bit_length, rnd).set_bit(bit_length - 1);
     }
@@ -6035,7 +6686,8 @@ inline bigint bigint::large_prime(std::int32_t bit_length, std::int32_t certaint
   return candidate;
 }
 
-// get_prime_search_len.
+// 返回 next_probable_prime() 对指定 bit_length 使用的筛选区间长度
+// bit_length 超过实现允许的搜索上限时抛出 std::runtime_error
 inline std::int32_t bigint::get_prime_search_len(std::int32_t bit_length) {
   if (bit_length > PRIME_SEARCH_BIT_LENGTH_LIMIT + 1) {
     throw std::runtime_error("prime search implementation restriction on bit length");
@@ -6043,18 +6695,19 @@ inline std::int32_t bigint::get_prime_search_len(std::int32_t bit_length) {
   return bit_length / 20 * 64;
 }
 
-// SMALL_PRIME_PRODUCT = 3*5*...*41.
+// 返回 3、5、7 到 41 的连续小素数乘积
 inline bigint bigint::small_prime_product() {
-  return value_of(3LL * 5 * 7 * 11 * 13 * 17 * 19 * 23 * 29 * 31 * 37 * 41);
+  return value_of(static_cast<std::int64_t>(SMALL_PRIME_PRODUCT_MAGNITUDE));
 }
 
-// 返回大于当前值的第一个 probable prime
+// 返回严格大于当前值的第一个 probable prime
+// 当前值为负数时抛出 std::runtime_error
 inline bigint bigint::next_probable_prime() const {
   if (signum_ < 0) {
     throw std::runtime_error("start < 0: " + to_string());
   }
 
-  if (signum_ == 0 || *this == ONE) {
+  if (signum_ == 0 || compare_to(ONE) == 0) {
     return TWO;
   }
 
@@ -6066,7 +6719,7 @@ inline bigint bigint::next_probable_prime() const {
 
     while (true) {
       if (result.bit_length() > 6) {
-        const std::int64_t r = result.remainder(small_prime_product()).long_value();
+        const std::uint64_t r = result.mod_small_prime_product();
         if ((r % 3 == 0) || (r % 5 == 0) || (r % 7 == 0) || (r % 11 == 0) || (r % 13 == 0) || (r % 17 == 0) ||
             (r % 19 == 0) || (r % 23 == 0) || (r % 29 == 0) || (r % 31 == 0) || (r % 37 == 0) || (r % 41 == 0)) {
           result = result.add(TWO);
@@ -6095,48 +6748,61 @@ inline bigint bigint::next_probable_prime() const {
     if (search_sieve.retrieve(candidate, result, DEFAULT_PRIME_CERTAINTY)) {
       return candidate;
     }
-    result = result.add(bigint::value_of(2LL * search_len));
+    result = result.add(2LL * search_len);
   }
 }
 
-// decimal — 不可变任意精度带符号十进制数.
+// decimal
+// 任意精度带符号十进制数,对外按不可变值对象使用
 //
-// 数值 = unscaledValue × 10^(-scale).
+// decimal 由任意精度整数 unscaled value 和 32 位 scale 组成
+// 数值等于 unscaled value * 10^(-scale)
+// scale >= 0 时表示小数点右侧位数,scale < 0 时表示 unscaled value 还要乘以 10^(-scale)
 //
-// 双表示:
-//   compact : int_compact_ != INFLATED — 值可以放进 std::int64_t.
-//   inflated: int_compact_ == INFLATED — int_val_ 存放完整值.
-
+// 同一数值可以具有不同 scale,例如 2.0 和 2.00 数值相等但表示不同
+// compare_to() 只比较数值,equals() 同时要求数值和 scale 相同
+// to_string() 返回能够保留 unscaled value 与 scale 的规范字符串表示
+//
+// 不带 math_context 的算术运算要求精确结果
+// precision == 0 的 math_context 同样要求精确结果且忽略 rounding_mode
+// precision > 0 时先计算逻辑上的精确结果,再按指定有效位数和 rounding_mode 舍入
+// 精确除法遇到无限循环小数时抛出异常,round_mode::UNNECESSARY 在需要舍入时抛出异常
+//
+// 为减少常见值的分配和多精度运算,内部使用两种等价表示
+// int_compact_ != INFLATED 时由 std::int64_t 保存 unscaled value
+// int_compact_ == INFLATED 时由 int_val_ 保存完整 unscaled value
+//
+// 这个 struct 按项目约定保持全公有,调用者仍不得直接修改表示字段和缓存字段
 struct decimal {
-  // 未缩放值; int_compact 为 INFLATED 时为主存储.
+  // 未缩放值; int_compact 为 INFLATED 时为主存储
   // 始终与 int_compact_ 同步; int_compact_ == INFLATED 时以此为真值
   bigint int_val_{};
 
-  // scale: 非负时表示小数点右侧位数.
+  // scale: 非负时表示小数点右侧位数
   std::int32_t scale_{0};
 
-  // 精度缓存; 0 表示未知.
+  // 精度缓存; 0 表示未知
   mutable std::int32_t precision_{0};
 
-  // to_string 结果缓存.
+  // to_string 结果缓存
   mutable std::string string_cache_{};
 
-  // compact 表示; INFLATED 表示已膨胀到 bigint.
+  // compact 表示; INFLATED 表示已膨胀到 bigint
   std::int64_t int_compact_{0};
 
-  // int_compact 的哨兵值, 表示有效数字信息仅可从 int_val 获取.
+  // int_compact 的哨兵值, 表示有效数字信息仅可从 int_val 获取
   static constexpr std::int64_t INFLATED = INT64_MIN;
 
-  // 所有 18 位十进制字符串可放入 long; 并非所有 19 位字符串都可以.
+  // 所有 18 位十进制字符串可放入 long; 并非所有 19 位字符串都可以
   static constexpr std::int32_t MAX_COMPACT_DIGITS = 18;
 
-  // Long.MAX_VALUE / 2, 用于舍入判断.
+  // Long.MAX_VALUE / 2,用于舍入判断
   static constexpr std::int64_t HALF_LONG_MAX_VALUE = INT64_MAX / 2;
 
-  // Long.MIN_VALUE / 2, 用于舍入判断.
+  // Long.MIN_VALUE / 2,用于舍入判断
   static constexpr std::int64_t HALF_LONG_MIN_VALUE = INT64_MIN / 2;
 
-  // 10 的幂 lookup 表 (10^0.. 10^18).
+  // 10 的幂 lookup 表 (10^0.. 10^18)
   static constexpr std::int64_t LONG_TEN_POWERS_TABLE[19] = {
       1LL,                   // 0 / 10^0
       10LL,                  // 1 / 10^1
@@ -6186,7 +6852,7 @@ struct decimal {
       {0x4b3b4ca85a86c47aLL, static_cast<std::int64_t>(0x098a224000000000ULL)},  // 10^38
   };
 
-  // long 与 10 的幂相乘时的溢出阈值表.
+  // long 与 10 的幂相乘时的溢出阈值表
   static constexpr std::int64_t THRESHOLDS_TABLE[19] = {
       INT64_MAX,                         // 0
       INT64_MAX / 10LL,                  // 1
@@ -6209,7 +6875,7 @@ struct decimal {
       INT64_MAX / 1000000000000000000LL  // 18
   };
 
-  // 10 的幂 bigint 表, 惰性扩展.
+  // 10 的幂 bigint 表, 惰性扩展
   // 惰性初始化 (单线程, 非线程安全)
   static const bigint& big_ten_to_the(std::int32_t n) {
     static const bigint init_vals[] = {
@@ -6254,37 +6920,42 @@ struct decimal {
     return (*ext_cache)[n];
   }
 
-  // 预缓存 [0, 10] 的 decimal 常量.
+  // 预缓存 [0, 10] 的 decimal 常量
   // 在此声明, 类外定义静态常量
   static const decimal ZERO_THROUGH_TEN[11];
 
-  // scale 0~15 的零值 decimal 常量.
+  // scale 0~15 的零值 decimal 常量
   static const decimal ZERO_SCALED_BY[16];
 
-  // 常量 0, scale 为 0.
+  // 常量 0, scale 为 0
   static const decimal ZERO;
-  // 常量 1, scale 为 0.
+  // 常量 1, scale 为 0
   static const decimal ONE;
-  // 常量 2, scale 为 0.
+  // 常量 2, scale 为 0
   static const decimal TWO;
-  // 常量 10, scale 为 0.
+  // 常量 10, scale 为 0
   static const decimal TEN;
 
-  // 常量 0.1, scale 为 1.
+  // 常量 0.1,scale 为 1
   static const decimal ONE_TENTH;
-  // 常量 0.5, scale 为 1.
+  // 常量 0.5,scale 为 1
   static const decimal ONE_HALF;
 
   // --- 构造函数 ---
 
+  // 构造数值为 0、scale 为 0 的 decimal
   decimal() = default;
 
-  // compact 值可只存 int_compact_; INFLATED 表示真实值存于 int_val_.
+  // 使用已经一致的内部字段直接构造 decimal
+  // val != INFLATED 时 val 保存 unscaled value,int_val 可为空
+  // val == INFLATED 时 int_val 必须保存完整 unscaled value,prec 为 0 表示精度尚未计算
   decimal(bigint int_val, std::int64_t val, std::int32_t scale, std::int32_t prec)
       : int_val_(std::move(int_val)), scale_(scale), precision_(prec), int_compact_(val) {
   }
 
-  // 将字符子序列解析为 decimal, 并按 math_context 舍入.
+  // 将 in[offset, offset + len) 解析为 decimal,并按 mc 舍入
+  // 接受可选前导正负号、十进制小数点以及 e 或 E 指数,不接受空白和其他字符
+  // len <= 0、格式非法、指数或 scale 越界以及要求但无法完成的舍入都会抛出异常
   decimal(const char* in, std::int32_t offset, std::int32_t len, const math_context& mc = math_context::UNLIMITED)
       : decimal() {
     if (len <= 0) {
@@ -6442,40 +7113,45 @@ struct decimal {
     scale_ = scl;
     precision_ = prec;
     int_compact_ = rs;
-    int_val_ = (rs == INFLATED) ? rb : bigint{};
+    int_val_ = (rs == INFLATED) ? std::move(rb) : bigint{};
   }
 
-  // 将 C 字符串解析为 decimal.
+  // 将以空字符结尾的完整 C 字符串解析为 decimal
+  // 使用不限精度上下文,格式规则与字符子序列构造函数相同
   decimal(const char* in) : decimal(in, 0, static_cast<std::int32_t>(std::strlen(in))) {
   }
 
-  // 将 C 字符串解析为 decimal, 并按 math_context 舍入.
+  // 将以空字符结尾的完整 C 字符串解析为 decimal,并按 mc 舍入
   decimal(const char* in, const math_context& mc) : decimal(in, 0, static_cast<std::int32_t>(std::strlen(in)), mc) {
   }
 
-  // 将字符串解析为 decimal.
+  // 将完整 std::string 解析为 decimal,使用不限精度上下文
   decimal(const std::string& val) : decimal(val.c_str(), 0, static_cast<std::int32_t>(val.size())) {
   }
 
-  // 将字符串解析为 decimal, 并按 math_context 舍入.
+  // 将完整 std::string 解析为 decimal,并按 mc 舍入
   decimal(const std::string& val, const math_context& mc)
       : decimal(val.c_str(), 0, static_cast<std::int32_t>(val.size()), mc) {
   }
 
-  // 将字符串视图解析为 decimal.
+  // 将完整 std::string_view 解析为 decimal,使用不限精度上下文
+  // 输入不需要以空字符结尾
   decimal(std::string_view val) : decimal(val.data(), 0, static_cast<std::int32_t>(val.size())) {
   }
 
-  // 将字符串视图解析为 decimal, 并按 math_context 舍入.
+  // 将完整 std::string_view 解析为 decimal,并按 mc 舍入
+  // 输入不需要以空字符结尾
   decimal(std::string_view val, const math_context& mc)
       : decimal(val.data(), 0, static_cast<std::int32_t>(val.size()), mc) {
   }
 
-  // 将 double 转为 decimal, 其值为 double 二进制浮点值的精确十进制表示.
+  // 构造与 double 二进制浮点值精确相等的 decimal
+  // 结果通常不同于对最短可往返字符串调用 value_of(double),NaN 和 infinity 会抛出异常
   decimal(double val) : decimal(val, math_context::UNLIMITED) {
   }
 
-  // 将 double 转为 decimal 并按 math_context 舍入.
+  // 构造与 double 二进制浮点值精确相等的 decimal,随后按 mc 舍入
+  // NaN 和正负 infinity 无 decimal 表示并会抛出 std::runtime_error
   decimal(double val, const math_context& mc) : decimal() {
     if (std::isinf(val) || std::isnan(val)) {
       throw std::runtime_error("infinite or nan");
@@ -6504,10 +7180,10 @@ struct decimal {
     if (exponent == 0) {
       rb = (compact_val == INFLATED) ? bigint::value_of(INFLATED) : bigint{};
     } else if (exponent < 0) {
-      rb = bigint::value_of(5).pow(-exponent).multiply(bigint(compact_val));
+      rb = bigint::value_of(5).pow(-exponent).multiply(compact_val);
       scl = -exponent;
     } else {
-      rb = bigint::TWO.pow(exponent).multiply(bigint(compact_val));
+      rb = bigint::TWO.pow(exponent).multiply(compact_val);
     }
     if (exponent != 0) {
       compact_val = compact_val_for(rb);
@@ -6543,31 +7219,34 @@ struct decimal {
         rb = bigint{};
       }
     }
-    int_val_ = rb;
+    int_val_ = std::move(rb);
     int_compact_ = compact_val;
     scale_ = scl;
     precision_ = prec;
   }
 
-  // 将 bigint 转为 decimal; scale 为 0.
+  // 使用 bigint val 作为 unscaled value 构造 scale 为 0 的 decimal
+  // val 可放入 compact 表示时自动使用 int_compact_
   decimal(const bigint& val) {
     scale_ = 0;
     int_val_ = to_strict_bigint(val);
     int_compact_ = compact_val_for(int_val_);
   }
 
-  // 将 bigint 转为 decimal 并按 math_context 舍入.
+  // 使用 bigint val 构造 scale 为 0 的 decimal,随后按 mc 舍入
   decimal(const bigint& val, const math_context& mc) : decimal(to_strict_bigint(val), 0, mc) {
   }
 
-  // 由未缩放值与 scale 构造 decimal.
+  // 使用 unscaled_val 和 scale 构造数值 unscaled_val * 10^(-scale)
+  // unscaled_val 可放入 compact 表示时自动使用 int_compact_
   decimal(const bigint& unscaled_val, std::int32_t scale) {
     int_val_ = to_strict_bigint(unscaled_val);
     int_compact_ = compact_val_for(int_val_);
     scale_ = scale;
   }
 
-  // 由未缩放值与 scale 构造并按 math_context 舍入.
+  // 使用 unscaled_val 和 scale 构造 decimal,随后按 mc 舍入
+  // 舍入会减少有效数字并相应调整 scale 以保持结果数量级
   decimal(const bigint& unscaled_val, std::int32_t scale, const math_context& mc) : decimal() {
     bigint uv = to_strict_bigint(unscaled_val);
     std::int64_t compact_val = compact_val_for(uv);
@@ -6601,20 +7280,20 @@ struct decimal {
         uv = bigint{};
       }
     }
-    int_val_ = uv;
+    int_val_ = std::move(uv);
     int_compact_ = compact_val;
     scale_ = scale;
     precision_ = prec;
   }
 
-  // 将 32 位有符号整数转为 decimal; scale 为 0.
+  // 构造与 32 位有符号整数 val 精确相等且 scale 为 0 的 compact decimal
   decimal(std::int32_t val) {
     int_compact_ = val;
     scale_ = 0;
     int_val_ = bigint{};
   }
 
-  // 将 32 位有符号整数转为 decimal 并按 math_context 舍入.
+  // 构造与 32 位有符号整数 val 相等的 decimal,随后按 mc 舍入
   decimal(std::int32_t val, const math_context& mc) : decimal() {
     std::int32_t mcp = mc.precision();
     std::int64_t compact_val = val;
@@ -6637,14 +7316,16 @@ struct decimal {
     precision_ = prec;
   }
 
-  // 将 long 转为 decimal; scale 为 0.
+  // 构造与 64 位有符号整数 val 精确相等且 scale 为 0 的 decimal
+  // val == INFLATED 时使用 bigint 保存,避免与 compact 哨兵值混淆
   decimal(std::int64_t val) {
     int_compact_ = val;
     int_val_ = (val == INFLATED) ? bigint::value_of(INFLATED) : bigint{};
     scale_ = 0;
   }
 
-  // 将 long 转为 decimal 并按 math_context 舍入.
+  // 构造与 64 位有符号整数 val 相等的 decimal,随后按 mc 舍入
+  // val == INFLATED 时先使用 bigint 路径再尝试压缩
   decimal(std::int64_t val, const math_context& mc) : decimal() {
     std::int32_t mcp = mc.precision();
     round_mode mode = mc.get_rounding_mode();
@@ -6678,13 +7359,13 @@ struct decimal {
         rb = bigint{};
       }
     }
-    int_val_ = rb;
+    int_val_ = std::move(rb);
     int_compact_ = val;
     scale_ = scl;
     precision_ = prec;
   }
 
-  // 返回 long 绝对值的十进制位数.
+  // 返回非 INFLATED 的 std::int64_t x 绝对值的十进制位数,0 返回 1
   static std::int32_t long_digit_length(std::int64_t x) {
     // 前提: x != INFLATED
     if (x < 0) {
@@ -6693,20 +7374,21 @@ struct decimal {
     if (x < 10) {
       return 1;
     }
-    // r = ((64 - 前导零位数(x) + 1) * 1233) >> 12.
+    // r = ((64 - 前导零位数(x) + 1) * 1233) >> 12
     std::int32_t r = static_cast<std::int32_t>(
         (((64 - decimal_detail::count_leading_zeros(static_cast<std::uint64_t>(x)) + 1) * 1233) >> 12));
     const std::int64_t* tab = LONG_TEN_POWERS_TABLE;
     return (r >= 19 || x < tab[r]) ? r : r + 1;
   }
 
-  // 将 64 位有符号整数饱和转换为 32 位有符号整数; 超出范围时返回 INT32_MIN 或 INT32_MAX.
+  // 将 64 位有符号整数 value 饱和转换为 std::int32_t
+  // 小于下界时返回 INT32_MIN,大于上界时返回 INT32_MAX
   static std::int32_t saturate_long(std::int64_t s) {
     std::int32_t i = static_cast<std::int32_t>(s);
     return (s == static_cast<std::int64_t>(i)) ? i : (s < 0 ? INT32_MIN : INT32_MAX);
   }
 
-  // 比较两个 long 的绝对值大小.
+  // 比较两个非 INFLATED 的 std::int64_t 绝对值,返回 -1、0 或 1
   static std::int32_t long_compare_magnitude(std::int64_t x, std::int64_t y) {
     if (x < 0) {
       x = -x;
@@ -6717,17 +7399,18 @@ struct decimal {
     return (x < y) ? -1 : ((x == y) ? 0 : 1);
   }
 
-  // 无符号比较两个 long 值.
+  // 按无符号 64 位数值比较 one 和 two,one > two 时返回 true
   static bool unsigned_long_compare(std::uint64_t one, std::uint64_t two) {
     return one > two;
   }
 
-  // 无符号比较两个 long 值是否大于等于.
+  // 按无符号 64 位数值返回 a >= b
   static bool unsigned_long_compare_eq(std::uint64_t one, std::uint64_t two) {
     return one >= two;
   }
 
-  // 返回给定 bigint 的 compact 值; 过大时返回 INFLATED.
+  // 将 bigint val 精确压缩为 std::int64_t unscaled value
+  // val 无法表示或数值恰好等于 INFLATED 哨兵时返回 INFLATED
   static std::int64_t compact_val_for(const bigint& b) {
     const jarray<std::uint32_t>& m = b.mag_;
     std::int32_t len = m.length();
@@ -6735,7 +7418,7 @@ struct decimal {
       return 0;
     }
     std::int32_t d = static_cast<std::int32_t>(m[0]);
-    // 超过 18 位十进制或 mag[0] 为负时返回 INFLATED.
+    // 超过 18 位十进制或 mag[0] 为负时返回 INFLATED
     if (len > 2 || (len == 2 && d < 0)) {
       return INFLATED;
     }
@@ -6745,7 +7428,7 @@ struct decimal {
     return (b.signum_ < 0) ? -u : u;
   }
 
-  // 两 long 相加; 溢出时返回 INFLATED.
+  // 返回 x + y 的 compact 结果,发生 std::int64_t 溢出时返回 INFLATED
   static std::int64_t add_64(std::int64_t xs, std::int64_t ys) {
     std::int64_t sum = 0;
     if (decimal_detail::add_overflow(xs, ys, &sum)) {
@@ -6754,7 +7437,7 @@ struct decimal {
     return sum;
   }
 
-  // 两 long 相乘; 无法表示时返回 INFLATED.
+  // 返回 x * y 的 compact 结果,发生 std::int64_t 溢出时返回 INFLATED
   static std::int64_t multiply_64(std::int64_t x, std::int64_t y) {
     std::int64_t product = 0;
     if (decimal_detail::multiply_overflow(x, y, &product)) {
@@ -6763,7 +7446,8 @@ struct decimal {
     return product;
   }
 
-  // 计算 val * 10^n; 可表示为 long 时返回乘积, 否则返回 INFLATED.
+  // 返回 val * 10^n 的 compact 结果
+  // n 超过 compact 十次幂表或乘积溢出 std::int64_t 时返回 INFLATED
   static std::int64_t long_mul_pow10(std::int64_t val, std::int32_t n) {
     if (val == 0 || n <= 0) {
       return val;
@@ -6782,18 +7466,20 @@ struct decimal {
     return INFLATED;
   }
 
-  // 将高 32 位与低 32 位组合为一个 64 位值.
+  // 将无符号高 32 位 hi 和低 32 位 lo 组合为一个 64 位 bit 模式
   static std::int64_t make_64(std::int64_t hi, std::int64_t lo) {
     return (hi << 32) | (lo & 0xffffffffULL);
   }
 
-  // Knuth 除法中的乘减步骤.
+  // 从无符号 128 位工作值 (hi, lo) 减去 x * y
+  // 返回更新后的 128 位高低部分,用于 compact 128/64 Knuth 除法
   static std::int64_t mulsub(std::int64_t u1, std::int64_t u0, std::int64_t v1, std::int64_t v0, std::int64_t q0) {
     std::int64_t tmp = u0 - q0 * v0;
     return make_64(u1 + (tmp >> 32) - q0 * v1, tmp & 0xffffffffLL);
   }
 
-  // 128 位无符号幅度比较: 返回 |hi0,lo0| < |hi1,lo1|
+  // 按无符号 128 位数值比较 (hi0, lo0) 与 (hi1, lo1)
+  // 前者较小时返回 true
   static bool long_long_compare_magnitude(std::int64_t hi0, std::int64_t lo0, std::int64_t hi1, std::int64_t lo1) {
     if (hi0 != hi1) {
       return hi0 < hi1;
@@ -6802,7 +7488,7 @@ struct decimal {
            static_cast<std::uint64_t>((static_cast<std::uint64_t>((lo1)) + static_cast<std::uint64_t>(INT64_MIN)));
   }
 
-  // 返回 128 位值的精度 (十进制位数).
+  // 返回无符号 128 位值 (hi, lo) 的十进制位数,零返回 1
   static std::int32_t precision_128(std::int64_t hi, std::int64_t lo) {
     if (hi == 0) {
       if (lo >= 0) {
@@ -6823,7 +7509,7 @@ struct decimal {
     return r + 1;
   }
 
-  // 返回 bigint 绝对值的十进制位数.
+  // 返回 bigint b 绝对值的十进制位数,零返回 1
   static std::int32_t big_digit_length(const bigint& b) {
     if (b.signum_ == 0) {
       return 1;
@@ -6832,14 +7518,14 @@ struct decimal {
     return b.compare_magnitude(big_ten_to_the(r)) < 0 ? r : r + 1;
   }
 
-  // 不接受子类; 确保得到规范的 bigint 实例.
+  // 返回 val 的规范 bigint 值副本
+  // 通过按数值重新构造避免保留外部可能破坏的不规范表示
   static bigint to_strict_bigint(const bigint& val) {
-    // 非规范子类时复制 byte 数组构造新 bigint.
-    // 没有子类问题, 直接返回副本
-    return bigint(val.signum_, val.mag_);
+    return val;
   }
 
-  // 返回未缩放 bigint; compact 时由 int_compact_ 构造.
+  // 返回当前 decimal 的完整 bigint unscaled value
+  // compact 表示按需构造 bigint,inflated 表示直接返回 int_val_ 的值副本
   bigint inflated() const {
     if (int_compact_ != INFLATED) {
       return bigint::value_of(int_compact_);
@@ -6847,38 +7533,43 @@ struct decimal {
     return int_val_;
   }
 
-  // 计算 this * 10^n (实例版本).
+  // 返回当前 unscaled value * 10^n
+  // 根据当前表示选择 compact 或 bigint 路径
   bigint big_mul_pow10(std::int32_t n) const {
     if (n <= 0) {
       return inflated();
     }
     if (int_compact_ != INFLATED) {
-      return big_ten_to_the(n).multiply(bigint(int_compact_));
-    } else {
-      return int_val_.multiply(big_ten_to_the(n));
+      return big_mul_pow10(int_compact_, n);
     }
+    return big_mul_pow10(int_val_, n);
   }
 
-  // 计算 long 值 * 10^n.
+  // 返回 compact unscaled value val * 10^n 的 bigint 结果
+  // compact 乘法溢出时自动切换到 bigint
   static bigint big_mul_pow10(std::int64_t value, std::int32_t n) {
     if (n <= 0) {
       return bigint(value);
     }
-    return big_ten_to_the(n).multiply(bigint(value));
+    if (n < 19) {
+      return bigint(value).multiply(LONG_TEN_POWERS_TABLE[n]);
+    }
+    return bigint(value).multiply(big_ten_to_the(n));
   }
 
-  // 计算 bigint 值 * 10^n.
+  // 返回 bigint val * 10^n,n 必须非负
   static bigint big_mul_pow10(const bigint& value, std::int32_t n) {
     if (n <= 0) {
       return value;
     }
     if (n < 19) {
-      return value.multiply(bigint(LONG_TEN_POWERS_TABLE[n]));
+      return value.multiply(LONG_TEN_POWERS_TABLE[n]);
     }
     return value.multiply(big_ten_to_the(n));
   }
 
-  // need_increment 计算的共享逻辑.
+  // 根据 rounding_mode、结果符号、被截断商的奇偶性和余数比较结果判断是否进位
+  // cmp_frac_half 表示 abs(remainder) 与 abs(divisor) / 2 的比较结果
   static bool common_need_increment(round_mode rounding_mode, std::int32_t qsign, std::int32_t cmp_frac_half,
                                     bool odd_quot) {
     switch (rounding_mode) {
@@ -6918,7 +7609,8 @@ struct decimal {
     }
   }
 
-  // 根据 rounding mode 判断 long 商是否需要加 1.
+  // 判断 std::int64_t 除法的截断商是否需要按 rounding_mode 远离零增加一个单位
+  // qsign 是精确结果符号,UNNECESSARY 在 remainder 非零时抛出异常
   static bool need_increment(std::int64_t ldivisor, round_mode rounding_mode, std::int32_t qsign, std::int64_t q,
                              std::int64_t r) {
     // assert r != 0L
@@ -6931,7 +7623,8 @@ struct decimal {
     return common_need_increment(rounding_mode, qsign, cmp_frac_half, (q & 1LL) != 0LL);
   }
 
-  // 根据 rounding mode 判断商是否需要加 1 (mutable_bigint 余数为 long).
+  // 判断 mutable_bigint 商是否需要按 rounding_mode 增加一个单位
+  // remainder 与 divisor 为无符号 64 位值,UNNECESSARY 在余数非零时抛出异常
   static bool need_increment(std::int64_t ldivisor, round_mode rounding_mode, std::int32_t qsign,
                              const mutable_bigint& mq, std::int64_t r) {
     // assert r != 0L
@@ -6944,7 +7637,8 @@ struct decimal {
     return common_need_increment(rounding_mode, qsign, cmp_frac_half, mq.is_odd());
   }
 
-  // 根据 rounding mode 判断商是否需要加 1 (mutable_bigint 余数).
+  // 判断 mutable_bigint 商是否需要按 rounding_mode 增加一个单位
+  // remainder 和 divisor 为非负多精度值,UNNECESSARY 在余数非零时抛出异常
   static bool need_increment(const mutable_bigint& mdivisor, round_mode rounding_mode, std::int32_t qsign,
                              const mutable_bigint& mq, const mutable_bigint& mr) {
     // assert !mr.isZero()
@@ -6952,7 +7646,8 @@ struct decimal {
     return common_need_increment(rounding_mode, qsign, cmp_frac_half, mq.is_odd());
   }
 
-  // 与 check_scale 相同, 但要求值非零.
+  // 将 scale 饱和检查为 std::int32_t,并假定所表示的数值非零
+  // scale 超出范围时抛出 std::runtime_error
   static std::int32_t check_scale_non_zero(std::int64_t val) {
     std::int32_t as_int = static_cast<std::int32_t>(val);
     if (static_cast<std::int64_t>(as_int) != val) {
@@ -6961,7 +7656,8 @@ struct decimal {
     return as_int;
   }
 
-  // 检查 scale 能否安全转换为 32 位有符号整数; 非零值溢出时抛异常.
+  // 将 scale 检查并转换为 std::int32_t
+  // 当前值非零且 scale 越界时抛出异常,零值越界时饱和到最近边界
   std::int32_t check_scale(std::int64_t val) const {
     std::int32_t as_int = static_cast<std::int32_t>(val);
     if (static_cast<std::int64_t>(as_int) != val) {
@@ -6973,7 +7669,8 @@ struct decimal {
     return as_int;
   }
 
-  // 将 long 被除数除以 long 除数并按舍入模式舍入; round_mode::DOWN 时直接截断.
+  // 将 std::int64_t dividend 除以 divisor 并按 rounding_mode 返回 compact 商
+  // DOWN 直接返回向零截断的商,其他模式根据余数决定是否远离零加一
   static std::int64_t divide_and_round_64(std::int64_t ldividend, std::int64_t ldivisor, round_mode rounding_mode) {
     std::int32_t qsign;
     std::int64_t q = ldividend / ldivisor;
@@ -6989,8 +7686,8 @@ struct decimal {
     return q;
   }
 
-  // 内部除法: 商 scale 为指定值; 有余数时按舍入模式处理,余数为 0 且 preferred scale
-  // 不同时可去掉尾随零.
+  // 将 compact dividend 除以 divisor,并使用 scale 构造 decimal 商
+  // 有余数时按 rounding_mode 舍入,精确商可向 preferred_scale 剥离多余尾随零
   static decimal divide_and_round(std::int64_t ldividend, std::int64_t ldivisor, std::int32_t scale, round_mode rm,
                                   std::int32_t pref_sc) {
     std::int32_t qsign;
@@ -7010,11 +7707,12 @@ struct decimal {
     return value_of(q, scale);
   }
 
-  // 将 bigint 除以 long 并按舍入模式舍入, 返回 bigint 商.
+  // 将 bigint dividend 除以非零 std::int64_t divisor,并按 rounding_mode 返回 bigint 商
+  // 商向零截断后根据余数决定是否远离零增加一个单位
   static bigint divide_and_round(const bigint& bdividend, std::int64_t ldivisor, round_mode rm) {
     mutable_bigint mdividend(bdividend.mag_);
     mutable_bigint mq;
-    // mutable_bigint::divide 期望除数的无符号幅度 (符号已由 qsign 单独处理).
+    // mutable_bigint::divide 期望除数的无符号幅度 (符号已由 qsign 单独处理)
     const std::uint64_t udivisor =
         (ldivisor < 0) ? -static_cast<std::uint64_t>((ldivisor)) : static_cast<std::uint64_t>((ldivisor));
     std::int64_t r = mdividend.divide(udivisor, mq);
@@ -7025,16 +7723,16 @@ struct decimal {
         mq.add(mutable_bigint::ONE);
       }
     }
-    mq.normalize();
-    return bigint(qsign, mq.to_int_array());
+    return bigint::from_mutable(std::move(mq), qsign);
   }
 
-  // 内部除法: bigint 除以 long, 返回 scale 已设的 decimal.
+  // 将 bigint dividend 除以 std::int64_t divisor,并使用 scale 构造 decimal 商
+  // 有余数时按 rounding_mode 舍入,精确商可向 preferred_scale 剥离尾随零
   static decimal divide_and_round(const bigint& bdividend, std::int64_t ldivisor, std::int32_t scale, round_mode rm,
                                   std::int32_t pref_sc) {
     mutable_bigint mdividend(bdividend.mag_);
     mutable_bigint mq;
-    // mutable_bigint::divide 期望除数的无符号幅度 (符号已由 qsign 单独处理).
+    // mutable_bigint::divide 期望除数的无符号幅度 (符号已由 qsign 单独处理)
     const std::uint64_t udivisor =
         (ldivisor < 0) ? -static_cast<std::uint64_t>((ldivisor)) : static_cast<std::uint64_t>((ldivisor));
     std::int64_t r = mdividend.divide(udivisor, mq);
@@ -7044,23 +7742,29 @@ struct decimal {
       if (need_increment(ldivisor, rm, qsign, mq, r)) {
         mq.add(mutable_bigint::ONE);
       }
-      mq.normalize();
-      return value_of(bigint(qsign, mq.to_int_array()), scale, 0);
+      const std::int64_t cv = mq.to_compact_value(qsign);
+      if (cv != INFLATED) {
+        return value_of(cv, scale);
+      }
+      return value_of(bigint::from_mutable(std::move(mq), qsign), scale, 0);
     }
     if (pref_sc != scale) {
-      mq.normalize();
-      bigint iv(qsign, mq.to_int_array());
-      std::int64_t cv = compact_val_for(iv);
+      const std::int64_t cv = mq.to_compact_value(qsign);
       if (cv != INFLATED) {
         return create_and_strip_zeros_to_match_scale(cv, scale, pref_sc);
       }
+      bigint iv = mq.to_bigint(qsign);
       return create_and_strip_zeros_to_match_scale(iv, scale, pref_sc);
     }
-    mq.normalize();
-    return value_of(bigint(qsign, mq.to_int_array()), scale, 0);
+    const std::int64_t cv = mq.to_compact_value(qsign);
+    if (cv != INFLATED) {
+      return value_of(cv, scale);
+    }
+    return value_of(bigint::from_mutable(std::move(mq), qsign), scale, 0);
   }
 
-  // 将 bigint 除以 bigint 并按舍入模式舍入, 返回 bigint 商.
+  // 将 bigint dividend 除以 bigint divisor,并按 rounding_mode 返回 bigint 商
+  // quotient 工作区保存向零截断的 magnitude 商,remainder 用于决定进位
   static bigint divide_and_round(const bigint& bdividend, const bigint& bdivisor, round_mode rm) {
     bool is_rem_zero;
     std::int32_t qsign;
@@ -7075,10 +7779,11 @@ struct decimal {
         mq.add(mutable_bigint::ONE);
       }
     }
-    mq.normalize();
-    return bigint(qsign, mq.to_int_array());
+    return bigint::from_mutable(std::move(mq), qsign);
   }
 
+  // 将 bigint dividend 除以 bigint divisor,并使用 scale 构造 decimal 商
+  // 有余数时按 rm 舍入,精确商可向 pref_sc 剥离十进制尾随零
   static decimal divide_and_round(const bigint& bdividend, const bigint& bdivisor, std::int32_t scale, round_mode rm,
                                   std::int32_t pref_sc) {
     bool is_rem_zero;
@@ -7093,23 +7798,29 @@ struct decimal {
       if (need_increment(mdivisor, rm, qsign, mq, mr)) {
         mq.add(mutable_bigint::ONE);
       }
-      mq.normalize();
-      return value_of(bigint(qsign, mq.to_int_array()), scale, 0);
+      const std::int64_t cv = mq.to_compact_value(qsign);
+      if (cv != INFLATED) {
+        return value_of(cv, scale);
+      }
+      return value_of(bigint::from_mutable(std::move(mq), qsign), scale, 0);
     }
     if (pref_sc != scale) {
-      mq.normalize();
-      bigint iv(qsign, mq.to_int_array());
-      std::int64_t cv = compact_val_for(iv);
+      const std::int64_t cv = mq.to_compact_value(qsign);
       if (cv != INFLATED) {
         return create_and_strip_zeros_to_match_scale(cv, scale, pref_sc);
       }
+      bigint iv = mq.to_bigint(qsign);
       return create_and_strip_zeros_to_match_scale(iv, scale, pref_sc);
     }
-    mq.normalize();
-    return value_of(bigint(qsign, mq.to_int_array()), scale, 0);
+    const std::int64_t cv = mq.to_compact_value(qsign);
+    if (cv != INFLATED) {
+      return value_of(cv, scale);
+    }
+    return value_of(bigint::from_mutable(std::move(mq), qsign), scale, 0);
   }
 
-  // 将 bigint 除以 10 的幂并按舍入模式舍入.
+  // 将 bigint value 除以 10^n 并按 rounding_mode 返回整数商
+  // n 必须非负,较小 n 使用 compact 除数,较大 n 使用 bigint 十次幂
   static bigint divide_and_round_by_10pow(const bigint& int_val, std::int32_t ten_pow, round_mode rm) {
     if (ten_pow < 19) {
       return divide_and_round(int_val, LONG_TEN_POWERS_TABLE[ten_pow], rm);
@@ -7117,7 +7828,8 @@ struct decimal {
     return divide_and_round(int_val, big_ten_to_the(ten_pow), rm);
   }
 
-  // 返回指定 scale 的零值 decimal; 常用 scale 走缓存常量.
+  // 返回数值为零且具有指定 scale 的 decimal
+  // scale 位于缓存范围时复用 ZERO_SCALED_BY 常量
   static decimal zero_value_of(std::int32_t scale) {
     if (scale >= 0 && scale < 16) {
       return ZERO_SCALED_BY[scale];
@@ -7125,7 +7837,8 @@ struct decimal {
     return decimal(bigint::ZERO, 0, scale, 1);
   }
 
-  // 由未缩放 long 与 scale 构造 decimal.
+  // 使用 compact unscaled value 和 scale 构造 decimal
+  // 常用整数和带 scale 的零值优先复用缓存
   static decimal value_of(std::int64_t unscaled_val, std::int32_t scale) {
     if (scale == 0) {
       return value_of(unscaled_val);
@@ -7136,7 +7849,8 @@ struct decimal {
     return decimal(unscaled_val == INFLATED ? bigint::value_of(INFLATED) : bigint{}, unscaled_val, scale, 0);
   }
 
-  // 由未缩放值, scale 与精度缓存构造 decimal.
+  // 使用 compact unscaled value、scale 和已知 precision 构造 decimal
+  // 常用整数和带 scale 的零值优先复用缓存
   static decimal value_of(std::int64_t unscaled_val, std::int32_t scale, std::int32_t prec) {
     if (scale == 0 && unscaled_val >= 0 && unscaled_val < 11) {
       return ZERO_THROUGH_TEN[static_cast<std::int32_t>(unscaled_val)];
@@ -7147,7 +7861,8 @@ struct decimal {
     return decimal(unscaled_val == INFLATED ? bigint::value_of(INFLATED) : bigint{}, unscaled_val, scale, prec);
   }
 
-  // 将 long 转为 scale 为 0 的 decimal; 优先复用 [0,10] 缓存.
+  // 返回与 std::int64_t val 精确相等且 scale 为 0 的 decimal
+  // [0, 10] 优先复用缓存,val == INFLATED 时使用 bigint 表示
   static decimal value_of(std::int64_t val) {
     if (val >= 0 && val < 11) {
       return ZERO_THROUGH_TEN[static_cast<std::int32_t>(val)];
@@ -7158,8 +7873,9 @@ struct decimal {
     return decimal(bigint::value_of(INFLATED), val, 0, 0);
   }
 
-  // 由 bigint 未缩放值与 scale 构造 decimal.
-  static decimal value_of(const bigint& int_val, std::int32_t scale, std::int32_t prec) {
+  // 使用 bigint unscaled value 和 scale 构造 decimal
+  // 数值可压缩时切换到 compact 表示,零值使用指定 scale 的缓存路径
+  static decimal value_of(bigint int_val, std::int32_t scale, std::int32_t prec) {
     std::int64_t val = compact_val_for(int_val);
     if (val == 0) {
       return zero_value_of(scale);
@@ -7167,10 +7883,11 @@ struct decimal {
     if (scale == 0 && val >= 0 && val < 11) {
       return ZERO_THROUGH_TEN[static_cast<std::int32_t>(val)];
     }
-    return decimal(int_val, val, scale, prec);
+    return decimal(std::move(int_val), val, scale, prec);
   }
 
-  // 校验 s 解析后与 val 比特级一致.
+  // 返回字符串 s 经 std::strtod 解析后是否与 val 具有完全相同的 double bit 模式
+  // 用于验证候选十进制字符串能够往返
   static bool double_string_roundtrip(const char* s, double val) {
     char* end = nullptr;
     const double parsed = std::strtod(s, &end);
@@ -7184,54 +7901,93 @@ struct decimal {
     return bits_val == bits_parsed;
   }
 
-  // plain 形式使用 adjusted exponent 阈值 [-3, 7).
-  static std::int32_t plain_adjusted_exponent(const char* s) {
-    bool neg = s[0] == '-';
-    if (neg) {
-      ++s;
+  // 将最短可往返浮点字符串规范为 decimal 使用的 plain 或 scientific 形式
+  // 科学计数法使用一个整数位、至少一个小数位和大写 E
+  static std::string normalize_shortest_double(std::string_view raw) {
+    const bool negative = !raw.empty() && raw.front() == '-';
+    const std::size_t begin = negative ? 1 : 0;
+    const std::size_t exponent_pos = raw.find_first_of("eE", begin);
+    const std::size_t significand_end = exponent_pos == std::string_view::npos ? raw.size() : exponent_pos;
+    const std::size_t dot_pos = raw.find('.', begin);
+    const std::size_t integer_end = dot_pos < significand_end ? dot_pos : significand_end;
+
+    std::int32_t exponent = 0;
+    if (exponent_pos != std::string_view::npos) {
+      exponent = static_cast<std::int32_t>(std::strtol(raw.data() + exponent_pos + 1, nullptr, 10));
     }
-    const char* dot = std::strchr(s, '.');
-    if (dot != nullptr) {
-      for (const char* p = s; p < dot; ++p) {
-        if (*p >= '1' && *p <= '9') {
-          return static_cast<std::int32_t>(p - s);
+
+    std::string digits;
+    digits.reserve(significand_end - begin);
+    std::size_t first_nonzero = std::string_view::npos;
+    for (std::size_t i = begin; i < significand_end; ++i) {
+      if (raw[i] == '.') {
+        continue;
+      }
+      if (first_nonzero == std::string_view::npos && raw[i] != '0') {
+        first_nonzero = i;
+      }
+      if (first_nonzero != std::string_view::npos) {
+        digits.push_back(raw[i]);
+      }
+    }
+    if (digits.empty()) {
+      return negative ? "-0.0" : "0.0";
+    }
+    while (digits.size() > 1 && digits.back() == '0') {
+      digits.pop_back();
+    }
+
+    std::int32_t adjusted_exponent = exponent;
+    if (exponent_pos == std::string_view::npos) {
+      if (first_nonzero < integer_end) {
+        adjusted_exponent = static_cast<std::int32_t>(integer_end - first_nonzero) - 1;
+      } else {
+        adjusted_exponent = -static_cast<std::int32_t>(first_nonzero - integer_end);
+      }
+    } else {
+      adjusted_exponent += static_cast<std::int32_t>(integer_end - begin) - 1;
+    }
+
+    std::string result;
+    result.reserve(digits.size() + 16);
+    if (negative) {
+      result.push_back('-');
+    }
+    if (adjusted_exponent >= -3 && adjusted_exponent < 7) {
+      if (adjusted_exponent >= 0) {
+        const std::size_t integer_digits = static_cast<std::size_t>(adjusted_exponent) + 1;
+        if (digits.size() <= integer_digits) {
+          result.append(digits);
+          result.append(integer_digits - digits.size(), '0');
+          result.append(".0");
+        } else {
+          result.append(digits, 0, integer_digits);
+          result.push_back('.');
+          result.append(digits, integer_digits, std::string::npos);
         }
+      } else {
+        result.append("0.");
+        result.append(static_cast<std::size_t>(-adjusted_exponent - 1), '0');
+        result.append(digits);
       }
-      for (const char* p = dot + 1; *p != '\0'; ++p) {
-        if (*p >= '1' && *p <= '9') {
-          return -static_cast<std::int32_t>(p - dot);
-        }
-      }
-      return 0;
+      return result;
     }
-    const char* start = s;
-    while (*start == '0' && start[1] != '\0') {
-      ++start;
+
+    result.push_back(digits.front());
+    result.push_back('.');
+    if (digits.size() == 1) {
+      result.push_back('0');
+    } else {
+      result.append(digits, 1, std::string::npos);
     }
-    const char* end = start + std::strlen(start);
-    return static_cast<std::int32_t>(end - start) - 1;
+    result.push_back('E');
+    result.append(std::to_string(adjusted_exponent));
+    return result;
   }
 
-  static bool java_plain_double_string(const char* s) {
-    return plain_adjusted_exponent(s) >= -3 && plain_adjusted_exponent(s) < 7;
-  }
-
-  // 将 %E 输出规范为大写 E,并移除正指数中的 '+'.
-  static void normalize_java_exponent_notation(char* buf) {
-    char* e = std::strchr(buf, 'E');
-    if (e == nullptr) {
-      e = std::strchr(buf, 'e');
-    }
-    if (e != nullptr) {
-      *e = 'E';
-      if (e[1] == '+') {
-        std::memmove(e + 1, e + 2, std::strlen(e + 2) + 1);
-      }
-    }
-  }
-
-  // 生成最短可往返的十进制字符串,科学计数法使用大写 E.
-  static std::string double_to_java_format_string(double val) {
+  // 返回能够经 std::strtod 无损还原 val 的最短规范十进制字符串
+  // NaN 和 infinity 被拒绝,科学计数法使用大写 E
+  static std::string double_to_format_string(double val) {
     if (std::isinf(val) || std::isnan(val)) {
       throw std::runtime_error("infinite or nan");
     }
@@ -7240,54 +7996,46 @@ struct decimal {
     }
 
     char buf[64];
-    // 先二分定位最短可往返的有效位数. "%.*e" (精度 = 小数点后位数) 的往返性关于精度
-    // 单调 (位数越多越接近真值, 一旦往返成立则更高精度必成立), 故可二分. 由此跳过
-    // 低精度下必然往返失败的迭代, 避免线性扫描 1..17 (尤其是需要 15~17 位的常见情形).
-    std::int32_t lo = 0;   // "%.*e" 精度下界, 对应 1 位有效数字
-    std::int32_t hi = 16;  // double 最短往返不超过 17 位有效数字
-    while (lo < hi) {
-      const std::int32_t mid = (lo + hi) / 2;
-      std::snprintf(buf, sizeof(buf), "%.*e", mid, val);
-      if (double_string_roundtrip(buf, val)) {
-        hi = mid;
-      } else {
-        lo = mid + 1;
+    const std::to_chars_result chars = std::to_chars(buf, buf + sizeof(buf), val, std::chars_format::scientific);
+    if (chars.ec != std::errc{}) {
+      throw std::runtime_error("failed to format double");
+    }
+    *chars.ptr = '\0';
+    const std::string_view shortest(buf, static_cast<std::size_t>(chars.ptr - buf));
+    std::size_t significant_digits = 0;
+    for (const char digit : shortest.substr(0, shortest.find_first_of("eE"))) {
+      if (digit >= '1' && digit <= '9') {
+        ++significant_digits;
+      } else if (digit == '0' && significant_digits != 0) {
+        ++significant_digits;
       }
     }
-    const std::int32_t min_eprec = lo;           // 最短 "%.*e" 精度
-    const std::int32_t min_sig = min_eprec + 1;  // 最短有效位数 (= "%.*g" 精度)
 
-    // plain 形式: "%.*g" 精度 = 有效位数; 低于 min_sig 必然往返失败, 从 min_sig 起扫描.
-    for (std::int32_t prec = min_sig; prec <= 17; ++prec) {
-      std::snprintf(buf, sizeof(buf), "%.*g", prec, val);
-      if (double_string_roundtrip(buf, val) && std::strchr(buf, 'e') == nullptr && std::strchr(buf, 'E') == nullptr &&
-          java_plain_double_string(buf)) {
-        // plain 形式总带小数点 (如 11.0),整数结果补 ".0".
-        if (std::strchr(buf, '.') == nullptr) {
-          return std::string(buf) + ".0";
-        }
-        return buf;
+    // 最短结果只有一位有效数字时同时比较两位候选
+    // 例如最小非零 double 使用 4.9E-324,而不是一般 shortest 模式给出的 5.0E-324
+    if (significant_digits == 1) {
+      char two_digit_buf[64];
+      const std::to_chars_result two_digit =
+          std::to_chars(two_digit_buf, two_digit_buf + sizeof(two_digit_buf), val, std::chars_format::scientific, 1);
+      if (two_digit.ec == std::errc{}) {
+        *two_digit.ptr = '\0';
+      }
+      if (two_digit.ec == std::errc{} && double_string_roundtrip(two_digit_buf, val)) {
+        return normalize_shortest_double(
+            std::string_view(two_digit_buf, static_cast<std::size_t>(two_digit.ptr - two_digit_buf)));
       }
     }
-    // sci 形式: "%.*E" 精度 = 小数点后位数; 从 max(min_eprec, 1) 起扫描 (保持原 1..17 行为).
-    for (std::int32_t prec = std::max(min_eprec, 1); prec <= 17; ++prec) {
-      std::snprintf(buf, sizeof(buf), "%.*E", prec, val);
-      normalize_java_exponent_notation(buf);
-      if (double_string_roundtrip(buf, val)) {
-        return buf;
-      }
-    }
-    std::snprintf(buf, sizeof(buf), "%.17g", val);
-    normalize_java_exponent_notation(buf);
-    return buf;
+    return normalize_shortest_double(shortest);
   }
 
-  // 用 double 的规范十进制字符串表示构造 decimal.
+  // 使用 double 的最短可往返十进制表示构造 decimal
+  // 与 decimal(double) 的精确二进制值转换不同,该结果通常更适合人类可读输出
   static decimal value_of(double val) {
-    return decimal(double_to_java_format_string(val));
+    return decimal(double_to_format_string(val));
   }
 
-  // 去掉 long 表示中可忽略的尾随零, 使 scale 尽量接近 preferred scale.
+  // 从 compact unscaled value 中剥离十进制尾随零,同时降低 scale
+  // 不会把 scale 降到 preferred_scale 以下
   static decimal create_and_strip_zeros_to_match_scale(std::int64_t cv, std::int32_t sc, std::int64_t psc) {
     while ((cv < 0 ? -cv : cv) >= 10LL && sc > psc) {
       if ((cv & 1LL) != 0LL) {
@@ -7308,7 +8056,8 @@ struct decimal {
     return value_of(cv, sc);
   }
 
-  // 去掉 bigint 表示中可忽略的尾随零, 使 scale 尽量接近 preferred scale.
+  // 从 bigint unscaled value 中剥离十进制尾随零,同时降低 scale
+  // 不会把 scale 降到 preferred_scale 以下,结果可压缩时切换到 compact 表示
   static decimal create_and_strip_zeros_to_match_scale(const bigint& iv, std::int32_t sc, std::int64_t psc) {
     bigint cur = iv;
     std::int32_t cs = sc;
@@ -7320,7 +8069,7 @@ struct decimal {
       if (qr.second.signum_ != 0) {
         break;
       }
-      cur = qr.first;
+      cur = std::move(qr.first);
       std::int64_t ns = static_cast<std::int64_t>(cs) - 1;
       std::int32_t as = static_cast<std::int32_t>(ns);
       if (static_cast<std::int64_t>(as) != ns) {
@@ -7328,10 +8077,11 @@ struct decimal {
       }
       cs = as;
     }
-    return value_of(cur, cs, 0);
+    return value_of(std::move(cur), cs, 0);
   }
 
-  // 按 compact 或 inflated 路径剥离尾随零以匹配 preferred scale.
+  // 根据 qsign 和 quotient 的实际表示构造 decimal 商
+  // 精确商会剥离尾随零,但 scale 不低于 preferred_scale
   static decimal strip_zeros_to_match_scale(const bigint& iv, std::int64_t ic, std::int32_t sc, std::int32_t psc) {
     if (ic != INFLATED) {
       return create_and_strip_zeros_to_match_scale(ic, sc, psc);
@@ -7339,57 +8089,59 @@ struct decimal {
     return create_and_strip_zeros_to_match_scale(iv, sc, psc);
   }
 
-  // 按 math_context 对 bigint 未缩放值舍入.
+  // 将 bigint unscaled value 按 mc.precision() 和 mc.rounding_mode 舍入
+  // 舍入删除的十进制位数会从 scale 中扣除,结果可压缩时使用 compact 表示
   static decimal do_round(const bigint& int_val, std::int32_t scale, const math_context& mc) {
-    std::int32_t mcp = mc.precision();
+    const std::int32_t mcp = mc.precision();
     std::int32_t prec = 0;
     if (mcp > 0) {
       std::int64_t cv = compact_val_for(int_val);
-      round_mode mode = mc.get_rounding_mode();
-      std::int32_t drop;
+      if (cv != INFLATED) {
+        return do_round(cv, scale, mc);
+      }
+
+      const round_mode mode = mc.get_rounding_mode();
       bigint cur_val = int_val;
       std::int32_t cur_s = scale;
-      if (cv == INFLATED) {
+      prec = big_digit_length(cur_val);
+      std::int32_t drop = prec - mcp;
+      while (drop > 0) {
+        cur_s = check_scale_non_zero(static_cast<std::int64_t>(cur_s) - drop);
+        cur_val = divide_and_round_by_10pow(cur_val, drop, mode);
+        cv = compact_val_for(cur_val);
+        if (cv != INFLATED) {
+          break;
+        }
         prec = big_digit_length(cur_val);
         drop = prec - mcp;
-        while (drop > 0) {
-          cur_s = check_scale_non_zero(static_cast<std::int64_t>(cur_s) - drop);
-          cur_val = divide_and_round_by_10pow(cur_val, drop, mode);
-          cv = compact_val_for(cur_val);
-          if (cv != INFLATED) {
-            break;
-          }
-          prec = big_digit_length(cur_val);
-          drop = prec - mcp;
-        }
       }
       if (cv != INFLATED) {
         prec = long_digit_length(cv);
         drop = prec - mcp;
         while (drop > 0) {
           cur_s = check_scale_non_zero(static_cast<std::int64_t>(cur_s) - drop);
-          cv = divide_and_round_64(cv, LONG_TEN_POWERS_TABLE[drop], mc.get_rounding_mode());
+          cv = divide_and_round_64(cv, LONG_TEN_POWERS_TABLE[drop], mode);
           prec = long_digit_length(cv);
           drop = prec - mcp;
         }
         return value_of(cv, cur_s, prec);
       }
-      return decimal(cur_val, INFLATED, cur_s, prec);
+      return decimal(std::move(cur_val), INFLATED, cur_s, prec);
     }
     return decimal(int_val, INFLATED, scale, prec);
   }
 
-  // 按 math_context 舍入 decimal.
+  // 返回 val 按 mc 舍入后的 decimal,不修改 val
+  // mc.precision() == 0 时直接返回 val
   static decimal do_round(const decimal& input, const math_context& mc) {
-    const bigint uv = input.inflated();
-    const std::int64_t cv = compact_val_for(uv);
-    if (cv != INFLATED) {
-      return do_round(cv, input.scale_, mc);
+    if (input.int_compact_ != INFLATED) {
+      return do_round(input.int_compact_, input.scale_, mc);
     }
-    return do_round(uv, input.scale_, mc);
+    return do_round(input.int_val_, input.scale_, mc);
   }
 
-  // 根据指数调整 scale (scl - exp); 超出 32 位有符号整数范围时抛异常.
+  // 返回应用十进制指数后的 scale,即 scl - exp
+  // 结果超出 std::int32_t 范围时抛出 std::runtime_error
   static std::int32_t adjust_scale(std::int32_t scl, std::int64_t exp) {
     std::int64_t as = static_cast<std::int64_t>(scl) - exp;
     if (as > INT32_MAX || as < INT32_MIN) {
@@ -7398,7 +8150,8 @@ struct decimal {
     return static_cast<std::int32_t>(as);
   }
 
-  // 解析字符序列中的十进制指数部分.
+  // 解析 e 或 E 后带可选正负号的十进制指数
+  // 格式非法、缺少指数数字或指数溢出时抛出 std::runtime_error
   static std::int64_t parse_exp(const char* in, std::int32_t offset, std::int32_t len) {
     std::int64_t exp = 0;
     offset++;
@@ -7437,7 +8190,7 @@ struct decimal {
     return negexp ? -exp : exp;
   }
 
-  // 返回符号函数: 负数为 -1, 零为 0, 正数为 1.
+  // 返回当前数值的符号,负数返回 -1,零返回 0,正数返回 1
   std::int32_t signum() const {
     if (int_compact_ != INFLATED) {
       return (int_compact_ > 0) ? 1 : ((int_compact_ < 0) ? -1 : 0);
@@ -7445,7 +8198,9 @@ struct decimal {
     return int_val_.signum_;
   }
 
-  // 返回 scale 为指定值的新 decimal; 通过乘除 10 的幂保持数值不变.
+  // 返回数值与当前值相等且 scale 为 new_scale 的 decimal
+  // 增大 scale 时向 unscaled value 追加零,减小 scale 时按 rounding_mode 丢弃低位数字
+  // UNNECESSARY 在减小 scale 需要舍入时抛出异常
   decimal set_scale(std::int32_t new_scale, round_mode rounding_mode) const {
     std::int32_t old_scale = scale_;
     if (new_scale == old_scale) {
@@ -7488,7 +8243,8 @@ struct decimal {
     }
   }
 
-  // 返回 scale 为 new_scale 的 decimal; 使用 32 位有符号整数形式的旧式舍入模式.
+  // 返回数值与当前值相等且 scale 为 new_scale 的 decimal
+  // rounding_mode 使用 round_mode 的底层整数值,超出合法范围时抛出 std::invalid_argument
   decimal set_scale(std::int32_t new_scale, std::int32_t rounding_mode) const {
     if (rounding_mode < static_cast<std::int32_t>((round_mode::UP)) ||
         rounding_mode > static_cast<std::int32_t>((round_mode::UNNECESSARY))) {
@@ -7497,17 +8253,19 @@ struct decimal {
     return set_scale(new_scale, static_cast<round_mode>((rounding_mode)));
   }
 
-  // 返回 scale 为指定值的新 decimal (舍入模式 UNNECESSARY).
+  // 精确返回 scale 为 new_scale 的 decimal
+  // 如果必须丢弃非零小数位才能达到目标 scale 则抛出异常
   decimal set_scale(std::int32_t new_scale) const {
     return set_scale(new_scale, round_mode::UNNECESSARY);
   }
 
-  // 返回 this 本身; 为与 negate 对称而提供.
+  // 返回当前值的副本,作为与 negate() 对称的一元正号操作
   decimal plus() const {
     return *this;
   }
 
-  // 按 math_context 舍入 this.
+  // 返回当前值按 mc 的 precision 和 rounding_mode 舍入后的结果
+  // mc.precision() == 0 时不执行舍入
   decimal plus(const math_context& mc) const {
     if (mc.precision() == 0) {
       return *this;
@@ -7515,12 +8273,13 @@ struct decimal {
     return do_round(*this, mc);
   }
 
-  // 按 math_context 舍入 decimal; precision 为 0 时不舍入.
+  // 返回当前值按 mc 舍入后的结果,语义与 plus(mc) 相同
   decimal round(const math_context& mc) const {
     return plus(mc);
   }
 
-  // 等价于将小数点左移 n 位.
+  // 返回小数点左移 n 位后的值,等价于 this * 10^(-n)
+  // n 可以为负,此时等价于向右移动,结果 scale 不小于 0
   decimal move_point_left(std::int32_t n) const {
     if (n == 0) {
       return *this;
@@ -7530,7 +8289,8 @@ struct decimal {
     return num.scale_ < 0 ? num.set_scale(0, round_mode::UNNECESSARY) : num;
   }
 
-  // 等价于将小数点右移 n 位.
+  // 返回小数点右移 n 位后的值,等价于 this * 10^n
+  // n 可以为负,此时等价于向左移动,结果 scale 不小于 0
   decimal move_point_right(std::int32_t n) const {
     if (n == 0) {
       return *this;
@@ -7540,14 +8300,16 @@ struct decimal {
     return num.scale_ < 0 ? num.set_scale(0, round_mode::UNNECESSARY) : num;
   }
 
-  // 返回数值等于 this * 10^n 的 decimal.
+  // 返回数值等于 this * 10^n 的 decimal,仅通过调整 scale 实现
+  // 与 move_point_right() 不同,结果允许具有负 scale
   decimal scale_by_power_of_ten(std::int32_t n) const {
     return decimal(int_val_, int_compact_, check_scale(static_cast<std::int64_t>(scale_) - n), precision_);
   }
 
-  // 返回数值相等但去掉表示中尾随零的 decimal.
+  // 返回数值相等且移除 unscaled value 十进制尾随零后的 decimal
+  // 每移除一个零便将 scale 减一,零值规范化为 scale 为 0 的 ZERO
   decimal strip_trailing_zeros() const {
-    // compact 模式下 int_val_ 可能为空; 仅当 int_compact_==INFLATED 时才读取 int_val_.
+    // compact 模式下 int_val_ 可能为空,仅当 int_compact_ == INFLATED 时才读取 int_val_
     if (signum() == 0) {
       return ZERO;
     } else if (int_compact_ != INFLATED) {
@@ -7557,12 +8319,14 @@ struct decimal {
     }
   }
 
-  // 返回 scale; 非负时表示小数点右侧位数.
+  // 返回当前表示的 scale
+  // 非负值表示小数点右侧位数,负值表示 unscaled value 还需乘以 10^(-scale)
   std::int32_t scale() const {
     return scale_;
   }
 
-  // 返回精度, 即未缩放值的位数; 零值的精度为 1.
+  // 返回 unscaled value 绝对值的十进制位数,零值返回 1
+  // 首次计算后缓存结果,precision 不包含前导正负号
   std::int32_t precision() const {
     std::int32_t result = precision_;
     if (result == 0) {
@@ -7577,12 +8341,13 @@ struct decimal {
     return result;
   }
 
-  // 返回未缩放值, 即 this * 10^this.scale().
+  // 返回完整 bigint unscaled value,满足 this == unscaled_value() * 10^(-scale())
   bigint unscaled_value() const {
     return inflated();
   }
 
-  // 返回未缩放的 int64 表示; compact 直接返回, inflated 时按 bigint::long_value 截断低 64 位.
+  // 将 unscaled value 转换为 std::int64_t
+  // inflated 值无法完整表示时仅保留二进制补码低 64 bit,可能丢失 magnitude 和符号信息
   std::int64_t unscaled_long_value() const {
     if (int_compact_ != INFLATED) {
       return int_compact_;
@@ -7590,7 +8355,8 @@ struct decimal {
     return int_val_.long_value();
   }
 
-  // 返回未缩放的 int64 表示; 无法完整放入 std::int64_t 时抛异常.
+  // 将 unscaled value 精确转换为 std::int64_t
+  // 无法完整表示时抛出 std::runtime_error
   std::int64_t unscaled_long_value_exact() const {
     if (int_compact_ != INFLATED) {
       return int_compact_;
@@ -7598,17 +8364,20 @@ struct decimal {
     return int_val_.long_value_exact();
   }
 
-  // 转换为 bigint; 丢弃小数部分, 可能丢失精度信息.
+  // 将当前值向零截断为 bigint
+  // 任何小数部分都会被丢弃,结果可能与当前值不相等
   bigint to_big_integer() const {
     return set_scale(0, round_mode::DOWN).inflated();
   }
 
-  // 精确转换为 bigint; 存在非零小数部分时抛异常.
+  // 将当前值精确转换为 bigint
+  // 存在非零小数部分时抛出异常
   bigint to_big_integer_exact() const {
     return set_scale(0, round_mode::UNNECESSARY).inflated();
   }
 
-  // 检查 scale 能否安全转换为 32 位有符号整数 (compact 非零时溢出抛异常).
+  // 将 val 检查并转换为 std::int32_t scale
+  // int_compact 非零且 val 越界时抛出异常,零值越界时饱和到最近边界
   static std::int32_t check_scale(std::int64_t int_compact, std::int64_t val) {
     std::int32_t as_int = static_cast<std::int32_t>((val));
     if (static_cast<std::int64_t>((as_int)) != val) {
@@ -7620,7 +8389,8 @@ struct decimal {
     return as_int;
   }
 
-  // 检查 scale 能否安全转换为 32 位有符号整数 (int_val 非零时溢出抛异常).
+  // 将 val 检查并转换为 std::int32_t scale
+  // int_val 非零且 val 越界时抛出异常,零值越界时饱和到最近边界
   static std::int32_t check_scale(const bigint& int_val, std::int64_t val) {
     std::int32_t as_int = static_cast<std::int32_t>((val));
     if (static_cast<std::int64_t>((as_int)) != val) {
@@ -7632,7 +8402,8 @@ struct decimal {
     return as_int;
   }
 
-  // 将两个 compact long 在相同 scale 下相加.
+  // 将具有相同 scale 的两个 compact unscaled value 相加
+  // compact 加法溢出时自动切换到 bigint,结果保留指定 scale
   static decimal add_compact(std::int64_t xs, std::int64_t ys, std::int32_t scale) {
     std::int64_t sum = add_64(xs, ys);
     if (sum != INFLATED) {
@@ -7641,7 +8412,8 @@ struct decimal {
     return value_of(bigint::value_of(xs).add(ys), scale, 0);
   }
 
-  // 将两个 compact long 按各自 scale 对齐后相加.
+  // 对齐两个 compact unscaled value 的 scale 后相加
+  // 结果采用 max(scale1, scale2),缩放或加法溢出时切换到 bigint
   static decimal add_compact_unaligned(std::int64_t xs, std::int32_t scale1, std::int64_t ys, std::int32_t scale2) {
     std::int64_t sdiff = static_cast<std::int64_t>((scale1)) - scale2;
     if (sdiff == 0) {
@@ -7653,7 +8425,8 @@ struct decimal {
         return add_compact(scaled_x, ys, scale2);
       }
       bigint bigsum = big_mul_pow10(xs, raise).add(ys);
-      return ((xs ^ ys) >= 0) ? decimal(bigsum, INFLATED, scale2, 0) : value_of(bigsum, scale2, 0);
+      return ((xs ^ ys) >= 0) ? decimal(std::move(bigsum), INFLATED, scale2, 0)
+                              : value_of(std::move(bigsum), scale2, 0);
     } else {
       std::int32_t raise = check_scale(ys, sdiff);
       std::int64_t scaled_y = long_mul_pow10(ys, raise);
@@ -7661,51 +8434,55 @@ struct decimal {
         return add_compact(xs, scaled_y, scale1);
       }
       bigint bigsum = big_mul_pow10(ys, raise).add(xs);
-      return ((xs ^ ys) >= 0) ? decimal(bigsum, INFLATED, scale1, 0) : value_of(bigsum, scale1, 0);
+      return ((xs ^ ys) >= 0) ? decimal(std::move(bigsum), INFLATED, scale1, 0)
+                              : value_of(std::move(bigsum), scale1, 0);
     }
   }
 
-  // 将 compact long 与 bigint 按各自 scale 对齐后相加.
+  // 对齐 compact unscaled value xs 与 bigint snd_in 的 scale 后相加
+  // 结果采用 max(scale1, scale2),必要时对较低 scale 的操作数乘以十次幂
   static decimal add_mixed(std::int64_t xs, std::int32_t scale1, const bigint& snd_in, std::int32_t scale2) {
-    bigint snd = snd_in;
     std::int32_t rscale = scale1;
     std::int64_t sdiff = static_cast<std::int64_t>((rscale)) - scale2;
-    bool same_sign = ((xs > 0) == (snd.signum_ > 0)) || (xs == 0 && snd.signum_ == 0);
+    bool same_sign = ((xs > 0) == (snd_in.signum_ > 0)) || (xs == 0 && snd_in.signum_ == 0);
     bigint sum;
     if (sdiff < 0) {
       std::int32_t raise = check_scale(xs, -sdiff);
       rscale = scale2;
       std::int64_t scaled_x = long_mul_pow10(xs, raise);
-      sum = (scaled_x == INFLATED) ? snd.add(big_mul_pow10(xs, raise)) : snd.add(scaled_x);
+      sum = (scaled_x == INFLATED) ? snd_in.add(big_mul_pow10(xs, raise)) : snd_in.add(scaled_x);
+    } else if (sdiff == 0) {
+      sum = snd_in.add(xs);
     } else {
-      std::int32_t raise = check_scale(snd, sdiff);
-      snd = big_mul_pow10(snd, raise);
+      std::int32_t raise = check_scale(snd_in, sdiff);
+      bigint snd = big_mul_pow10(snd_in, raise);
       sum = snd.add(xs);
     }
-    return same_sign ? decimal(sum, INFLATED, rscale, 0) : value_of(sum, rscale, 0);
+    return same_sign ? decimal(std::move(sum), INFLATED, rscale, 0) : value_of(std::move(sum), rscale, 0);
   }
 
-  // 将两个 bigint 按各自 scale 对齐后相加.
+  // 对齐两个 bigint unscaled value 的 scale 后相加
+  // 结果采用 max(scale1, scale2),可压缩时自动切换到 compact 表示
   static decimal add_inflated(const bigint& fst_in, std::int32_t scale1, const bigint& snd_in, std::int32_t scale2) {
-    bigint fst = fst_in;
-    bigint snd = snd_in;
     std::int32_t rscale = scale1;
     std::int64_t sdiff = static_cast<std::int64_t>((rscale)) - scale2;
-    if (sdiff != 0) {
-      if (sdiff < 0) {
-        std::int32_t raise = check_scale(fst, -sdiff);
-        rscale = scale2;
-        fst = big_mul_pow10(fst, raise);
-      } else {
-        std::int32_t raise = check_scale(snd, sdiff);
-        snd = big_mul_pow10(snd, raise);
-      }
+    bigint sum;
+    if (sdiff < 0) {
+      std::int32_t raise = check_scale(fst_in, -sdiff);
+      rscale = scale2;
+      sum = big_mul_pow10(fst_in, raise).add(snd_in);
+    } else if (sdiff > 0) {
+      std::int32_t raise = check_scale(snd_in, sdiff);
+      sum = fst_in.add(big_mul_pow10(snd_in, raise));
+    } else {
+      sum = fst_in.add(snd_in);
     }
-    bigint sum = fst.add(snd);
-    return (fst.signum_ == snd.signum_) ? decimal(sum, INFLATED, rscale, 0) : value_of(sum, rscale, 0);
+    return (fst_in.signum_ == snd_in.signum_) ? decimal(std::move(sum), INFLATED, rscale, 0)
+                                              : value_of(std::move(sum), rscale, 0);
   }
 
-  // 两个 compact long 相乘并设置 scale.
+  // 将两个 compact unscaled value 相乘并使用 check_scale 计算的 scale 构造结果
+  // compact 乘法溢出时切换到 bigint
   static decimal multiply_compact(std::int64_t x, std::int64_t y, std::int32_t scale) {
     std::int64_t product = multiply_64(x, y);
     if (product != INFLATED) {
@@ -7714,7 +8491,8 @@ struct decimal {
     return value_of(bigint::value_of(x).multiply(y), scale, 0);
   }
 
-  // compact long 与 bigint 相乘并设置 scale.
+  // 将 compact unscaled value x 与 bigint y 相乘并使用指定 scale 构造结果
+  // 结果可压缩时自动使用 compact 表示
   static decimal multiply_mixed(std::int64_t x, const bigint& y, std::int32_t scale) {
     if (x == 0 || y.signum_ == 0) {
       return zero_value_of(scale);
@@ -7722,7 +8500,8 @@ struct decimal {
     return value_of(y.multiply(x), scale, 0);
   }
 
-  // 两个 bigint 相乘并设置 scale.
+  // 将两个 bigint unscaled value 相乘并使用指定 scale 构造结果
+  // 结果可压缩时自动使用 compact 表示
   static decimal multiply_inflated(const bigint& x, const bigint& y, std::int32_t scale) {
     if (x.signum_ == 0 || y.signum_ == 0) {
       return zero_value_of(scale);
@@ -7730,7 +8509,8 @@ struct decimal {
     return value_of(x.multiply(y), scale, 0);
   }
 
-  // 128 位被除数除以 long 除数并按舍入模式舍入; 商无法放入 long 时返回 nullopt.
+  // 将无符号 128 位 dividend 除以无符号 64 位 divisor 并按 rounding_mode 舍入
+  // qsign 指定结果符号,商无法表示为 compact std::int64_t 时返回 std::nullopt
   static std::optional<decimal> try_divide_and_round_128(std::int64_t dividend_hi, std::int64_t dividend_lo,
                                                          std::int64_t divisor, std::int32_t sign, std::int32_t scale,
                                                          round_mode rounding_mode, std::int32_t preferred_scale) {
@@ -7807,7 +8587,7 @@ struct decimal {
       }
       std::int64_t r = static_cast<std::uint64_t>((mulsub(u1, u0, v1, v0, q0))) >> shift;
       if (r != 0) {
-        // 使用无符号右移还原 divisor.
+        // 使用无符号右移还原 divisor
         if (need_increment(static_cast<std::int64_t>((static_cast<std::uint64_t>((divisor)) >> shift)), rounding_mode,
                            sign, mq, r)) {
           mq.add(mutable_bigint::ONE);
@@ -7831,7 +8611,7 @@ struct decimal {
 
     std::int64_t r = static_cast<std::uint64_t>((mulsub(u1, u0, v1, v0, q0))) >> shift;
     if (r != 0) {
-      // 使用无符号右移还原 divisor,因为左移后高位可能置位.
+      // 使用无符号右移还原 divisor,因为左移后高位可能置位
       const bool increment = need_increment(static_cast<std::int64_t>((static_cast<std::uint64_t>((divisor)) >> shift)),
                                             rounding_mode, sign, q, r);
       return value_of(increment ? q + sign : q, scale);
@@ -7842,7 +8622,8 @@ struct decimal {
     return value_of(q, scale);
   }
 
-  // 对 128 位乘积按 math_context 舍入; 失败时返回 nullopt.
+  // 将有符号 128 位 unscaled value 按 mc 舍入并使用 scale 构造 decimal
+  // 结果无法保留在 compact 路径时返回 std::nullopt,由调用方回退到 bigint
   static std::optional<decimal> do_round_128(std::int64_t hi, std::int64_t lo, std::int32_t sign, std::int32_t scale,
                                              const math_context& mc) {
     const std::int32_t mcp = mc.precision();
@@ -7862,17 +8643,18 @@ struct decimal {
     return do_round(*res, mc);
   }
 
-  // 计算 (dividend0*dividend1)/divisor 并舍入.
+  // 计算 (dividend0 * dividend1) / divisor 并按 rounding_mode 返回 decimal
+  // 乘积使用 128 位中间值,compact 商不可用时回退到 bigint
   static decimal multiply_divide_and_round(std::int64_t dividend0, std::int64_t dividend1, std::int64_t divisor,
                                            std::int32_t scale, round_mode rm, std::int32_t preferred_scale) {
     if (auto result = try_multiply_divide_and_round(dividend0, dividend1, divisor, scale, rm, preferred_scale)) {
-      return *result;
+      return std::move(*result);
     }
     return divide_and_round(bigint::value_of(dividend0).multiply(dividend1), divisor, scale, rm, preferred_scale);
   }
 
-  // 同 multiply_divide_and_round,但当 (dividend0*dividend1)/divisor 的商超出 long
-  // 范围时返回 nullopt,由调用方回退到 bigint 路径.
+  // 尝试在 compact 128 位路径计算 (dividend0 * dividend1) / divisor
+  // 商超出 std::int64_t 范围时返回 std::nullopt,由调用方回退到 bigint
   static std::optional<decimal> try_multiply_divide_and_round(std::int64_t dividend0, std::int64_t dividend1,
                                                               std::int64_t divisor, std::int32_t scale, round_mode rm,
                                                               std::int32_t preferred_scale) {
@@ -7916,7 +8698,7 @@ struct decimal {
       }
       return value_of(qq, scale);
     }
-    // 余数为 0 时才 strip 尾随零.
+    // 余数为 0 时才 strip 尾随零
     if (preferred_scale != scale) {
       return create_and_strip_zeros_to_match_scale(qq, scale, preferred_scale);
     }
@@ -7928,7 +8710,8 @@ struct decimal {
 #endif
   }
 
-  // 对可能为负的 long 做除法,返回 {余数,商}.
+  // 对可能为负的 std::int64_t dividend 和 divisor 执行向零截断除法
+  // 返回值 first 为余数,second 为商,支持最小负数而不触发 abs 溢出
   static std::pair<std::int64_t, std::int64_t> div_rem_negative_long(std::int64_t n, std::int64_t d) {
     std::int64_t q =
         static_cast<std::int64_t>(((static_cast<std::uint64_t>((n)) >> 1) / (static_cast<std::uint64_t>((d)) >> 1)));
@@ -7944,7 +8727,8 @@ struct decimal {
     return std::pair<std::int64_t, std::int64_t>(r, q);
   }
 
-  // 返回 sign*10^n 且 scale 为指定值的 decimal.
+  // 返回 unscaled value 为 sign * 10^n 且具有指定 scale 的 decimal
+  // n 较小时使用 compact 十次幂,较大时使用 bigint
   static decimal scaled_ten_pow(std::int32_t n, std::int32_t sign, std::int32_t scale) {
     if (n < 0) {
       throw std::invalid_argument("negative power");
@@ -7963,8 +8747,8 @@ struct decimal {
     return value_of(iv, scale, 0);
   }
 
-  // 在 |被除数|==|除数| 时计算带舍入的 10 的幂商.
-  // 参数 raise 即商的 10 的幂次 (= mcp).
+  // 在被除数与除数绝对值相等时构造带舍入的十次幂商
+  // raise 是 unscaled 商的十次幂指数,qsign 指定结果符号
   static decimal rounded_ten_power(std::int32_t qsign, std::int32_t raise, std::int32_t scale,
                                    std::int32_t preferred_scale) {
     if (scale > preferred_scale) {
@@ -7977,7 +8761,8 @@ struct decimal {
     return scaled_ten_pow(raise, qsign, scale);
   }
 
-  // 两 long 相乘并按 math_context 舍入.
+  // 将两个 compact unscaled value 相乘并按 mc 舍入
+  // 乘积无法保留在 compact 路径时切换到 bigint
   static decimal multiply_and_round(std::int64_t x, std::int64_t y, std::int32_t scale, const math_context& mc) {
     std::int64_t product = multiply_64(x, y);
     if (product != INFLATED) {
@@ -7988,13 +8773,13 @@ struct decimal {
         decimal_detail::multiply_64x64(decimal_detail::unsigned_magnitude(x), decimal_detail::unsigned_magnitude(y));
     if (auto res = do_round_128(static_cast<std::int64_t>(wide_product.high),
                                 static_cast<std::int64_t>(wide_product.low), result_sign, scale, mc)) {
-      return *res;
+      return std::move(*res);
     }
     decimal res = value_of(bigint::value_of(x).multiply(y), scale, 0);
     return do_round_value(res, mc);
   }
 
-  // long 与 bigint 相乘并按 math_context 舍入.
+  // 将 compact x 与 bigint y 的 unscaled value 相乘并按 mc 舍入
   static decimal multiply_and_round(std::int64_t x, const bigint& y, std::int32_t scale, const math_context& mc) {
     if (x == 0) {
       return zero_value_of(scale);
@@ -8002,12 +8787,13 @@ struct decimal {
     return do_round(y.multiply(x), scale, mc);
   }
 
-  // 两 bigint 相乘并按 math_context 舍入.
+  // 将两个 bigint unscaled value 相乘并按 mc 舍入
   static decimal multiply_and_round(const bigint& x, const bigint& y, std::int32_t scale, const math_context& mc) {
     return do_round(x.multiply(y), scale, mc);
   }
 
-  // 由 compact long 与 scale 按 math_context 创建并舍入 decimal.
+  // 使用 compact unscaled value 和 scale 构造 decimal,随后按 mc 舍入
+  // mc.precision() == 0 时不舍入
   static decimal do_round(std::int64_t compact, std::int32_t scale, const math_context& mc) {
     std::int32_t mcp = mc.precision();
     if (mcp == 0 || compact == 0) {
@@ -8026,20 +8812,20 @@ struct decimal {
     return value_of(cur, cur_scale, prec);
   }
 
-  // 按 math_context 舍入已有 decimal; precision 为 0 时不舍入.
+  // 返回 d 按 mc 舍入后的 decimal
+  // mc.precision() == 0 时直接返回 d
   static decimal do_round_value(const decimal& val, const math_context& mc) {
     if (mc.precision() == 0) {
       return val;
     }
-    const bigint uv = val.inflated();
-    const std::int64_t cv = compact_val_for(uv);
-    if (cv != INFLATED) {
-      return do_round(cv, val.scale_, mc);
+    if (val.int_compact_ != INFLATED) {
+      return do_round(val.int_compact_, val.scale_, mc);
     }
-    return do_round(uv, val.scale_, mc);
+    return do_round(val.int_val_, val.scale_, mc);
   }
 
-  // 对齐两个 decimal 的 scale.
+  // 将 snd 与 fst 对齐到两者较大的 scale 后相加
+  // 用于无限精度加法,结果的 preferred scale 为 max(fst.scale(), snd.scale())
   static void match_scale(std::pair<decimal, decimal>& val) {
     if (val.first.scale_ < val.second.scale_) {
       val.first = val.first.set_scale(val.second.scale_, round_mode::UNNECESSARY);
@@ -8048,7 +8834,8 @@ struct decimal {
     }
   }
 
-  // 加法前预对齐, 在有限精度下保持正确舍入.
+  // 在有限 precision 加法前调整较小操作数的 scale 和有效位位置
+  // 保留会影响最终舍入的最高丢弃位,避免为巨大 scale 差分配十次幂
   std::pair<decimal, decimal> pre_align(const decimal& augend, std::int64_t padding, const math_context& mc) const {
     decimal big;
     decimal small;
@@ -8068,7 +8855,8 @@ struct decimal {
     return std::pair<decimal, decimal>(big, small);
   }
 
-  // compare_to 的无符号版本; 忽略符号比较绝对值大小.
+  // 忽略符号并按数值比较 lhs 与 rhs 的绝对值
+  // 返回 -1、0 或 1,必要时对齐 scale 后比较 unscaled magnitude
   std::int32_t compare_magnitude(const decimal& val) const {
     std::int64_t ys = val.int_compact_;
     std::int64_t xs = int_compact_;
@@ -8113,7 +8901,8 @@ struct decimal {
     return int_val_.compare_magnitude(val.int_val_);
   }
 
-  // 忽略符号, 归一化 scale 后比较两个 long 的幅度.
+  // 忽略符号并比较两个 compact unscaled value 在不同 scale 下的数值幅度
+  // 先尝试 compact 十次幂缩放,溢出时切换到 bigint
   static std::int32_t compare_magnitude_normalized(std::int64_t xs, std::int32_t xscale, std::int64_t ys,
                                                    std::int32_t yscale) {
     std::int64_t sdiff = static_cast<std::int64_t>((xscale)) - yscale;
@@ -8136,7 +8925,7 @@ struct decimal {
     return bigint::value_of(xs).compare_magnitude(big_mul_pow10(ys, raise));
   }
 
-  // 忽略符号, 比较 long 与 bigint 的幅度.
+  // 忽略符号并比较 compact lhs 与 bigint rhs 在不同 scale 下的数值幅度
   static std::int32_t compare_magnitude_normalized(std::int64_t xs, std::int32_t xscale, const bigint& ys,
                                                    std::int32_t yscale) {
     std::int64_t sdiff = static_cast<std::int64_t>((xscale)) - yscale;
@@ -8152,7 +8941,7 @@ struct decimal {
     return bigint::value_of(xs).compare_magnitude(big_mul_pow10(ys, raise));
   }
 
-  // 忽略符号, 比较两个 bigint 的幅度.
+  // 忽略符号并比较两个 bigint unscaled value 在不同 scale 下的数值幅度
   static std::int32_t compare_magnitude_normalized(const bigint& xs, std::int32_t xscale, const bigint& ys,
                                                    std::int32_t yscale) {
     std::int64_t sdiff = static_cast<std::int64_t>((xscale)) - yscale;
@@ -8167,7 +8956,8 @@ struct decimal {
     return xs.compare_magnitude(big_mul_pow10(ys, raise));
   }
 
-  // 除法快速路径: 小 scale 且低 precision 时使用.
+  // 在操作数 precision 和 scale 差较小时尝试 compact 除法快速路径
+  // 返回 true 表示 result 已写入,否则调用方继续使用通用除法路径
   static decimal divide_small_fast_path(std::int64_t xs, std::int32_t xscale, std::int64_t ys, std::int32_t yscale,
                                         std::int64_t preferred_scale, const math_context& mc) {
     const std::int32_t mcp = mc.precision();
@@ -8195,7 +8985,7 @@ struct decimal {
             const bigint rb = big_mul_pow10(scaled_x, mcp - 1);
             quotient = divide_and_round(rb, ys, scl, rm, check_scale_non_zero(preferred_scale));
           } else {
-            quotient = *q;
+            quotient = std::move(*q);
           }
         } else {
           quotient = divide_and_round(scaled_xs, ys, scl, rm, check_scale_non_zero(preferred_scale));
@@ -8236,7 +9026,7 @@ struct decimal {
             const bigint rb = big_mul_pow10(scaled_x, mcp);
             quotient = divide_and_round(rb, ys, scl, rm, check_scale_non_zero(preferred_scale));
           } else {
-            quotient = *q;
+            quotient = std::move(*q);
           }
         } else {
           quotient = divide_and_round(scaled_xs, ys, scl, rm, check_scale_non_zero(preferred_scale));
@@ -8247,7 +9037,8 @@ struct decimal {
     return do_round_value(quotient, mc);
   }
 
-  // 返回按 math_context 舍入的 xs/ys.
+  // 将两个 compact decimal 表示 xs * 10^-xscale 与 ys * 10^-yscale 相除
+  // 按 mc 选择商 precision、scale 和舍入方式,除数为零时抛出异常
   static decimal divide(std::int64_t xs, std::int32_t xscale, std::int64_t ys, std::int32_t yscale,
                         std::int64_t preferred_scale, const math_context& mc) {
     std::int32_t mcp = mc.precision();
@@ -8283,7 +9074,8 @@ struct decimal {
     return do_round_value(quotient, mc);
   }
 
-  // bigint 被除数除以 long 除数, 按 math_context 舍入.
+  // 将 bigint xval * 10^-xscale 除以 compact yval * 10^-yscale
+  // 按 mc 选择商 precision、scale 和舍入方式
   static decimal divide(const bigint& xs, std::int32_t xscale, std::int64_t ys, std::int32_t yscale,
                         std::int64_t preferred_scale, const math_context& mc) {
     if ((-compare_magnitude_normalized(ys, yscale, xs, xscale)) > 0) {
@@ -8312,7 +9104,8 @@ struct decimal {
     return do_round_value(quotient, mc);
   }
 
-  // long 被除数除以 bigint 除数, 按 math_context 舍入.
+  // 将 compact xval * 10^-xscale 除以 bigint yval * 10^-yscale
+  // 按 mc 选择商 precision、scale 和舍入方式
   static decimal divide(std::int64_t xs, std::int32_t xscale, const bigint& ys, std::int32_t yscale,
                         std::int64_t preferred_scale, const math_context& mc) {
     if (compare_magnitude_normalized(xs, xscale, ys, yscale) > 0) {
@@ -8334,7 +9127,8 @@ struct decimal {
     return do_round_value(quotient, mc);
   }
 
-  // bigint 除以 bigint, 按 math_context 舍入.
+  // 将两个 bigint unscaled value 表示的 decimal 相除
+  // 按 mc 选择商 precision、scale 和舍入方式
   static decimal divide(const bigint& xs, std::int32_t xscale, const bigint& ys, std::int32_t yscale,
                         std::int64_t preferred_scale, const math_context& mc) {
     if (compare_magnitude_normalized(xs, xscale, ys, yscale) > 0) {
@@ -8356,7 +9150,8 @@ struct decimal {
     return do_round_value(quotient, mc);
   }
 
-  // 静态除法: 对齐到指定商 scale 后 divideAndRound.
+  // 对齐两个 compact unscaled value,使商具有指定 scale,随后按 rounding_mode 相除
+  // scale 差导致 compact 缩放溢出时切换到 bigint
   static decimal divide(std::int64_t xs, std::int32_t xscale, std::int64_t ys, std::int32_t yscale, std::int32_t scale,
                         round_mode rm) {
     std::int32_t raise = check_scale_non_zero(static_cast<std::int64_t>((scale)) + yscale - xscale);
@@ -8374,7 +9169,8 @@ struct decimal {
                : divide_and_round(bigint::value_of(xs), big_mul_pow10(ys, -raise), scale, rm, scale);
   }
 
-  // bigint 被除数除以 long, 商 scale 固定.
+  // 对齐 bigint 被除数与 compact 除数,使商具有指定 scale
+  // 随后按 rounding_mode 舍入并尽量向 preferred_scale 剥离尾随零
   static decimal divide(const bigint& xs, std::int32_t xscale, std::int64_t ys, std::int32_t yscale, std::int32_t scale,
                         round_mode rm) {
     std::int32_t raise = check_scale_non_zero(static_cast<std::int64_t>((scale)) + yscale - xscale);
@@ -8386,7 +9182,8 @@ struct decimal {
                                    : divide_and_round(xs, big_mul_pow10(ys, -raise), scale, rm, scale);
   }
 
-  // long 被除数除以 bigint, 商 scale 固定.
+  // 对齐 compact 被除数与 bigint 除数,使商具有指定 scale
+  // 随后按 rounding_mode 舍入并尽量向 preferred_scale 剥离尾随零
   static decimal divide(std::int64_t xs, std::int32_t xscale, const bigint& ys, std::int32_t yscale, std::int32_t scale,
                         round_mode rm) {
     std::int32_t raise = check_scale_non_zero(static_cast<std::int64_t>((scale)) + yscale - xscale);
@@ -8396,7 +9193,8 @@ struct decimal {
     return divide_and_round(bigint::value_of(xs), big_mul_pow10(ys, -raise), scale, rm, scale);
   }
 
-  // bigint 除以 bigint, 商 scale 固定.
+  // 对齐两个 bigint unscaled value,使商具有指定 scale
+  // 随后按 rounding_mode 舍入并尽量向 preferred_scale 剥离尾随零
   static decimal divide(const bigint& xs, std::int32_t xscale, const bigint& ys, std::int32_t yscale,
                         std::int32_t scale, round_mode rm) {
     std::int32_t raise = check_scale_non_zero(static_cast<std::int64_t>((scale)) + yscale - xscale);
@@ -8406,26 +9204,30 @@ struct decimal {
     return divide_and_round(xs, big_mul_pow10(ys, -raise), scale, rm, scale);
   }
 
-  // 由 mutable_bigint 商与符号构造 decimal.
+  // 使用 magnitude 商 mq、符号 qsign 和 scale 构造 decimal
+  // 结果可压缩时使用 compact 表示
   static decimal mq_to_decimal(mutable_bigint& mq, std::int32_t sign, std::int32_t scale) {
     mq.normalize();
     bigint iv(sign, mq.to_int_array());
-    return value_of(iv, scale, 0);
+    return value_of(std::move(iv), scale, 0);
   }
 
-  // 由 mutable_bigint 商得到 compact long 值.
+  // 将 magnitude 商 mq 与 qsign 合成为 compact std::int64_t
+  // 无法精确表示时返回 INFLATED
   static std::int64_t mq_to_compact_value(mutable_bigint& mq, std::int32_t sign) {
     mq.normalize();
     bigint iv(sign, mq.to_int_array());
     return compact_val_for(iv);
   }
 
-  // 非零 decimal 的绝对值是否小于 1.
+  // 返回非零 decimal 的绝对值是否小于 1
+  // 调用方负责保证当前值非零
   static bool fraction_only(const decimal& x) {
-    return x.scale_ > 0 && x.abs().compare_to(decimal::ONE) < 0 && !x.is_zero();
+    return !x.is_zero() && x.precision() - x.scale_ <= 0;
   }
 
-  // 判断绝对值是否为 10 的幂.
+  // 返回当前值的绝对值是否为 10 的整数次幂
+  // 同时检查 unscaled value 和 scale 表示
   static bool is_power_of_ten(std::int64_t v) {
     if (v < 0) {
       v = -v;
@@ -8437,33 +9239,43 @@ struct decimal {
     return v == 1;
   }
 
-  // 判断正数 bigint 是否为 10 的幂.
+  // 返回正 bigint v 是否恰好为 10 的非负整数次幂
   static bool is_power_of_ten(const bigint& v) {
     if (v.signum_ <= 0) {
       return false;
     }
-    bigint cur = v;
-    while (true) {
-      auto qr = cur.divide_and_remainder(bigint::TEN);
-      if (qr.second.signum_ != 0) {
-        break;
-      }
-      cur = qr.first;
+    if (v.compare_to(bigint::ONE) == 0) {
+      return true;
     }
-    return cur == bigint::ONE;
+    if (v.mod_uint32(10) != 0) {
+      return false;
+    }
+    mutable_bigint cur(v.mag_);
+    mutable_bigint quotient;
+    while (true) {
+      if (cur.divide(10, quotient) != 0) {
+        return false;
+      }
+      if (quotient.is_one()) {
+        return true;
+      }
+      std::swap(cur, quotient);
+    }
   }
 
-  // 返回 x 的平方.
+  // 返回 decimal x 的精确平方,等价于 x.multiply(x)
   static decimal square(const decimal& x, const math_context& mc) {
     return x.multiply(x, mc);
   }
 
-  // 未缩放值为 1 时为 10 的幂.
+  // 返回当前 decimal 的 unscaled value 是否恰好为 1
+  // 与 scale 结合可判断当前值是否为 10 的幂
   bool is_power_of_ten_unscaled() const {
-    return inflated() == bigint::ONE;
+    return int_compact_ != INFLATED ? int_compact_ == 1 : int_val_.compare_to(bigint::ONE) == 0;
   }
 
-  // 生成规范字符串; sci 为 true 用科学计数法, false 用工程计数法.
+  // 返回保留当前 unscaled value 和 scale 的规范字符串
+  // sci 为 true 时使用科学计数法规则,false 时将指数调整为 3 的倍数以生成工程计数法
   std::string layout_chars(bool sci) const {
     if (scale_ == 0) {
       return (int_compact_ != INFLATED) ? std::to_string(int_compact_) : int_val_.to_string();
@@ -8565,7 +9377,7 @@ struct decimal {
     return out;
   }
 
-  // 生成带小数点的数字字符串.
+  // 按指定 scale 生成不含指数字段的字符串,正 scale 插入小数点,负 scale 在非零值末尾补零
   static std::string get_value_string(std::int64_t int_compact, const bigint& int_val, std::int32_t scale) {
     std::string int_string = (int_compact != INFLATED) ? std::to_string(int_compact) : int_val.to_string();
     if (scale == 0) {
@@ -8598,7 +9410,7 @@ struct decimal {
       out.append(int_string, digit_offset + static_cast<size_t>((precision - scale)), std::string::npos);
       return out;
     }
-    // scale < 0: 无小数点.零值无视负 scale,直接返回 "0".
+    // scale < 0 时无小数点,零值忽略负 scale 并直接返回 "0"
     if (digit_len == 1 && int_string[digit_offset] == '0') {
       return "0";
     }
@@ -8612,14 +9424,17 @@ struct decimal {
     return out;
   }
 
-  // 将 decimal 转为 long 前检查是否超出 long 范围.
+  // 丢弃小数部分后返回 64 位整数,整数部分超出 int64_t 范围时抛出 overflow
   static std::int64_t long_overflow_check(const decimal& num) {
-    decimal integral = num.set_scale(0, round_mode::DOWN);
-    bigint iv = (integral.int_compact_ != INFLATED) ? bigint::value_of(integral.int_compact_) : integral.int_val_;
+    decimal integral = num.scale_ == 0 ? num : num.set_scale(0, round_mode::DOWN);
+    if (integral.int_compact_ != INFLATED) {
+      return integral.int_compact_;
+    }
+    const bigint& iv = integral.int_val_;
     if (iv.bit_length() > 63) {
       throw std::runtime_error("overflow");
     }
-    return (integral.int_compact_ != INFLATED) ? integral.int_compact_ : iv.long_value();
+    return iv.long_value();
   }
 
   static constexpr float FLOAT_10_POW[11] = {1.0f,   10.0f,  100.0f, 1.0e3f, 1.0e4f, 1.0e5f,
@@ -8628,7 +9443,7 @@ struct decimal {
                                                1.0e8,  1.0e9,  1.0e10, 1.0e11, 1.0e12, 1.0e13, 1.0e14, 1.0e15,
                                                1.0e16, 1.0e17, 1.0e18, 1.0e19, 1.0e20, 1.0e21, 1.0e22};
 
-  // 返回 this + augend; scale 为 max(this.scale(), augend.scale()).
+  // 返回精确的 this + augend,结果的首选 scale 为两个操作数 scale 的较大值
   decimal add(const decimal& augend) const {
     if (int_compact_ != INFLATED) {
       if (augend.int_compact_ != INFLATED)
@@ -8641,20 +9456,20 @@ struct decimal {
     return add_inflated(int_val_, scale_, augend.int_val_, augend.scale_);
   }
 
-  // 返回按 math_context 舍入的 this + augend.
+  // 返回按 mc 精度和舍入模式计算的 this + augend,mc 精度为 0 时返回精确结果
+  // 对零操作数尽量保留两个操作数中较大的首选 scale,但不会为此超过 mc 的有效位数
   decimal add(const decimal& augend, const math_context& mc) const {
     if (mc.precision() == 0) {
       return add(augend);
     }
-    decimal lhs = *this;
-    bool lhs_is_zero = lhs.signum() == 0;
+    bool lhs_is_zero = signum() == 0;
     bool augend_is_zero = augend.signum() == 0;
     if (lhs_is_zero || augend_is_zero) {
-      std::int32_t preferred_scale = std::max(lhs.scale_, augend.scale_);
+      std::int32_t preferred_scale = std::max(scale_, augend.scale_);
       if (lhs_is_zero && augend_is_zero) {
         return zero_value_of(preferred_scale);
       }
-      decimal result = lhs_is_zero ? do_round_value(augend, mc) : do_round_value(lhs, mc);
+      decimal result = lhs_is_zero ? do_round_value(augend, mc) : do_round_value(*this, mc);
       if (result.scale_ == preferred_scale) {
         return result;
       }
@@ -8668,18 +9483,19 @@ struct decimal {
       }
       return result.set_scale(result.scale_ + precision_diff);
     }
-    std::int64_t padding = static_cast<std::int64_t>((lhs.scale_)) - augend.scale_;
+    std::int64_t padding = static_cast<std::int64_t>((scale_)) - augend.scale_;
+    if (int_compact_ != INFLATED && augend.int_compact_ != INFLATED && padding > -19 && padding < 19) {
+      return do_round_value(add_compact_unaligned(int_compact_, scale_, augend.int_compact_, augend.scale_), mc);
+    }
     if (padding != 0) {
       std::pair<decimal, decimal> arg = pre_align(augend, padding, mc);
       match_scale(arg);
-      lhs = arg.first;
-      decimal aug = arg.second;
-      return do_round(lhs.inflated().add(aug.inflated()), lhs.scale_, mc);
+      return do_round(arg.first.inflated().add(arg.second.inflated()), arg.first.scale_, mc);
     }
-    return do_round(lhs.inflated().add(augend.inflated()), lhs.scale_, mc);
+    return do_round(inflated().add(augend.inflated()), scale_, mc);
   }
 
-  // 返回 this - subtrahend; scale 为 max(this.scale(), subtrahend.scale()).
+  // 返回精确的 this - subtrahend,结果的首选 scale 为两个操作数 scale 的较大值
   decimal subtract(const decimal& subtrahend) const {
     if (int_compact_ != INFLATED) {
       if (subtrahend.int_compact_ != INFLATED) {
@@ -8693,7 +9509,7 @@ struct decimal {
     return add_inflated(int_val_, scale_, subtrahend.int_val_.negate(), subtrahend.scale_);
   }
 
-  // 返回按 math_context 舍入的 this - subtrahend.
+  // 返回按 mc 精度和舍入模式计算的 this - subtrahend,mc 精度为 0 时返回精确结果
   decimal subtract(const decimal& subtrahend, const math_context& mc) const {
     if (mc.precision() == 0) {
       return subtract(subtrahend);
@@ -8701,7 +9517,8 @@ struct decimal {
     return add(subtrahend.negate(), mc);
   }
 
-  // 返回 this * multiplicand; scale 为 this.scale()+multiplicand.scale().
+  // 返回精确的 this * multiplicand,结果的首选 scale 为两个操作数 scale 之和
+  // scale 之和超出 int32_t 范围且 this 非零时抛出 overflow,零值路径将 scale 饱和到最近边界
   decimal multiply(const decimal& multiplicand) const {
     std::int32_t product_scale = check_scale(static_cast<std::int64_t>((scale_)) + multiplicand.scale_);
     if (int_compact_ != INFLATED) {
@@ -8714,7 +9531,9 @@ struct decimal {
     return multiply_inflated(int_val_, multiplicand.int_val_, product_scale);
   }
 
-  // 返回按 math_context 舍入的 this * multiplicand.
+  // 返回按 mc 精度和舍入模式计算的 this * multiplicand
+  // 结果的首选 scale 为两个操作数 scale 之和,mc 精度为 0 时返回精确结果
+  // scale 之和超出 int32_t 范围且 this 非零时抛出 overflow
   decimal multiply(const decimal& multiplicand, const math_context& mc) const {
     if (mc.precision() == 0) {
       return multiply(multiplicand);
@@ -8732,7 +9551,8 @@ struct decimal {
     return multiply_and_round(int_val_, multiplicand.int_val_, product_scale, mc);
   }
 
-  // 返回 this / divisor; 精确除法要求有限十进制展开, 否则抛异常.
+  // 返回 this / divisor 的精确商,结果的首选 scale 为 this.scale() - divisor.scale()
+  // 除数为零或商没有有限十进制展开时抛出异常,必要时增加 scale 以完整表示精确结果
   decimal divide(const decimal& divisor) const {
     if (divisor.signum() == 0) {
       if (signum() == 0) {
@@ -8761,17 +9581,20 @@ struct decimal {
     return quotient;
   }
 
-  // 返回 this / divisor, scale 为 this.scale(); 应用指定舍入模式.
+  // 返回 scale 与 this 相同的 this / divisor,不能精确表示的部分按 rounding_mode 舍入
+  // 除数为零或 rounding_mode 为 UNNECESSARY 且需要舍入时抛出异常
   decimal divide(const decimal& divisor, round_mode rounding_mode) const {
     return divide(divisor, scale_, rounding_mode);
   }
 
-  // 返回 this / divisor; 使用 32 位有符号整数形式的旧式舍入模式.
+  // 返回 scale 与 this 相同的 this / divisor,使用兼容旧接口的整数舍入模式
+  // 舍入模式值无效、除数为零或要求精确但存在舍入时抛出异常
   decimal divide(const decimal& divisor, std::int32_t rounding_mode) const {
     return divide(divisor, ::value_of(static_cast<std::int32_t>(rounding_mode)));
   }
 
-  // 返回 this / divisor, 商 scale 为指定值.
+  // 返回具有指定 scale 的 this / divisor,不能精确表示的部分按 rounding_mode 舍入
+  // 除数为零或 rounding_mode 为 UNNECESSARY 且需要舍入时抛出异常
   decimal divide(const decimal& divisor, std::int32_t scale, round_mode rounding_mode) const {
     if (divisor.signum() == 0) {
       throw std::runtime_error("division by zero");
@@ -8786,12 +9609,14 @@ struct decimal {
     return divide(int_val_, scale_, divisor.int_val_, divisor.scale_, scale, rounding_mode);
   }
 
-  // 返回 this / divisor, 商 scale 为指定值; 使用 32 位有符号整数形式的旧式舍入模式.
+  // 返回具有指定 scale 的 this / divisor,使用兼容旧接口的整数舍入模式
+  // 舍入模式值无效、除数为零或要求精确但存在舍入时抛出异常
   decimal divide(const decimal& divisor, std::int32_t scale, std::int32_t rounding_mode) const {
     return divide(divisor, scale, ::value_of(static_cast<std::int32_t>(rounding_mode)));
   }
 
-  // 返回按 math_context 舍入的 this / divisor.
+  // 返回按 mc 精度和舍入模式计算的 this / divisor,结果的首选 scale 为两操作数 scale 之差
+  // mc 精度为 0 时要求精确且具有有限十进制展开,除数为零或需要但不允许舍入时抛出异常
   decimal divide(const decimal& divisor, const math_context& mc) const {
     if (mc.precision() == 0) {
       return divide(divisor);
@@ -8806,9 +9631,9 @@ struct decimal {
     if (signum() == 0) {  // 0 / y
       return zero_value_of(saturate_long(preferred_scale));
     }
-    // 注意: 内部 divide 的 xscale/yscale 参数传入的是 precision(),而非 scale.
+    // 注意: 内部 divide 的 xscale/yscale 参数传入的是 precision(),而非 scale
     // 归一化时把 x,y 视作 unscaled*10^-precision,使其落入 [0.1, 1),
-    // 从而 divideAndRound 到 mc.precision 即可得到恰好 mc.precision 位有效数字的结果.
+    // 从而 divideAndRound 到 mc.precision 即可得到恰好 mc.precision 位有效数字的结果
     std::int32_t xscale = precision();
     std::int32_t yscale = divisor.precision();
     if (int_compact_ != INFLATED) {
@@ -8821,7 +9646,8 @@ struct decimal {
     return divide(int_val_, xscale, divisor.int_val_, yscale, preferred_scale, mc);
   }
 
-  // 返回 this / divisor 的整数部分.
+  // 返回 this / divisor 向零截断后的整数部分,结果的首选 scale 为 this.scale() - divisor.scale()
+  // 商始终精确表示截断后的整数部分,除数为零时抛出异常
   decimal divide_to_integral_value(const decimal& divisor) const {
     std::int32_t preferred_scale = saturate_long(static_cast<std::int64_t>((scale_)) - divisor.scale_);
     if (compare_magnitude(divisor) < 0) {
@@ -8847,7 +9673,8 @@ struct decimal {
     return quotient;
   }
 
-  // 返回 this / divisor 的整数部分, 按 math_context 舍入.
+  // 返回 this / divisor 向零截断后的整数部分,mc 的舍入模式不影响结果
+  // mc 精度非零且整数商需要超过该有效位数,或除数为零时抛出异常
   decimal divide_to_integral_value(const decimal& divisor, const math_context& mc) const {
     if (mc.precision() == 0 || compare_magnitude(divisor) < 0) {
       return divide_to_integral_value(divisor);
@@ -8869,31 +9696,39 @@ struct decimal {
     return strip_zeros_to_match_scale(result.int_val_, result.int_compact_, result.scale_, preferred_scale);
   }
 
-  // 返回 this % divisor; 非模运算, 可为负.
+  // 返回 this - divide_to_integral_value(divisor) * divisor,因此是余数而不是非负模
+  // 结果符号与 this 相同或为零且绝对值小于 divisor 的绝对值,除数为零时抛出异常
   decimal remainder(const decimal& divisor) const {
     return subtract(divide_to_integral_value(divisor).multiply(divisor));
   }
 
-  // 返回按 math_context 舍入的 remainder.
+  // 使用受 mc 精度约束的整数商计算余数,余数本身不按 mc 舍入
+  // 整数商超过 mc 精度或除数为零时抛出异常
   decimal remainder(const decimal& divisor, const math_context& mc) const {
     return subtract(divide_to_integral_value(divisor, mc).multiply(divisor));
   }
 
-  // 返回商与余数 pair: 依次为 divide_to_integral_value 与 remainder.
+  // 同时返回整数商和余数,first 为向零截断的商,second 满足 this = first * divisor + second
+  // 除数为零时抛出异常
   std::pair<decimal, decimal> divide_and_remainder(const decimal& divisor) const {
     decimal q = divide_to_integral_value(divisor);
     decimal r = subtract(q.multiply(divisor));
-    return std::pair<decimal, decimal>(q, r);
+    return std::pair<decimal, decimal>(std::move(q), std::move(r));
   }
 
-  // 按 math_context 返回商与余数 pair.
+  // 同时返回受 mc 精度约束的整数商及由该商精确计算的余数,余数本身不按 mc 舍入
+  // 整数商超过 mc 精度或除数为零时抛出异常
   std::pair<decimal, decimal> divide_and_remainder(const decimal& divisor, const math_context& mc) const {
+    if (mc.precision() == 0) {
+      return divide_and_remainder(divisor);
+    }
     decimal q = divide_to_integral_value(divisor, mc);
     decimal r = subtract(q.multiply(divisor));
-    return std::pair<decimal, decimal>(q, r);
+    return std::pair<decimal, decimal>(std::move(q), std::move(r));
   }
 
-  // 按数值比较两个 decimal; scale 不同但值相等者视为相等.
+  // 按数值比较 this 与 val,忽略表示形式和 scale 差异,返回负数、零或正数
+  // 因此 2.0 与 2.00 的比较结果为零,即使 equals 返回 false
   std::int32_t compare_to(const decimal& val) const {
     if (scale_ == val.scale_) {
       if (int_compact_ != INFLATED && val.int_compact_ != INFLATED) {
@@ -8915,13 +9750,8 @@ struct decimal {
     return (xsign > 0) ? cmp : -cmp;
   }
 
-  // 比较值与 scale 是否均相等; 2.0 与 2.00 不相等; scale-sensitive equality.
+  // 判断 this 与 other 是否具有相同数值和相同 scale,表示同一数值但 scale 不同的值不相等
   bool equals(const decimal& other) const {
-    return *this == other;
-  }
-
-  // 比较值与 scale 是否均相等; 2.0 与 2.00 不相等; scale-sensitive equality.
-  bool operator==(const decimal& other) const {
     if (scale_ != other.scale_) {
       return false;
     }
@@ -8930,25 +9760,21 @@ struct decimal {
     }
     bigint a = (int_compact_ != INFLATED) ? bigint::value_of(int_compact_) : int_val_;
     bigint b = (other.int_compact_ != INFLATED) ? bigint::value_of(other.int_compact_) : other.int_val_;
-    return a == b;
+    return a.compare_to(b) == 0;
   }
 
-  // 比较值与 scale 是否不完全相等.
-  bool operator!=(const decimal& other) const {
-    return !(*this == other);
-  }
-
-  // 返回 this 与 val 的较小值.
+  // 按 compare_to 返回 this 与 val 中数值较小者,数值相等时保留 this 的表示形式
   decimal min(const decimal& val) const {
     return compare_to(val) <= 0 ? *this : val;
   }
 
-  // 返回 this 与 val 的较大值.
+  // 按 compare_to 返回 this 与 val 中数值较大者,数值相等时保留 this 的表示形式
   decimal max(const decimal& val) const {
     return compare_to(val) >= 0 ? *this : val;
   }
 
-  // 返回 hash; 由未缩放值与 scale 计算.
+  // 返回由未缩放值和 scale 共同计算的哈希值,保证 equals 相等的对象具有相同哈希值
+  // 数值相等但 scale 不同的对象通常具有不同哈希值
   std::int32_t hash_code() const {
     if (int_compact_ != INFLATED) {
       std::int64_t val2 = (int_compact_ < 0) ? -int_compact_ : int_compact_;
@@ -8959,17 +9785,17 @@ struct decimal {
     return 31 * int_val_.hash_code() + scale_;
   }
 
-  // 返回绝对值.
+  // 返回 this 的绝对值并保留 scale,非负值直接返回等价副本
   decimal abs() const {
     return (signum() < 0) ? negate() : *this;
   }
 
-  // 返回按 math_context 舍入的绝对值.
+  // 返回按 mc 精度和舍入模式舍入的绝对值,mc 精度为 0 时结果精确
   decimal abs(const math_context& mc) const {
     return (signum() < 0) ? negate(mc) : plus(mc);
   }
 
-  // 返回相反数.
+  // 返回与 this 数值相反且 scale 相同的精确结果,零值仍保持原 scale
   decimal negate() const {
     if (int_compact_ == INFLATED) {
       return value_of(int_val_.negate(), scale_, precision_);
@@ -8977,7 +9803,7 @@ struct decimal {
     return value_of(-int_compact_, scale_, precision_);
   }
 
-  // 返回按 math_context 舍入的相反数.
+  // 返回按 mc 精度和舍入模式舍入的相反数,mc 精度为 0 时结果精确
   decimal negate(const math_context& mc) const {
     if (mc.precision() == 0) {
       return negate();
@@ -8985,12 +9811,13 @@ struct decimal {
     return do_round_value(negate(), mc);
   }
 
-  // 判断数值是否为零.
+  // 判断数值是否为零,不受 scale 和内部紧凑或大整数表示形式影响
   bool is_zero() const {
     return int_compact_ == 0LL || (int_compact_ == INFLATED && int_val_.signum_ == 0);
   }
 
-  // 返回 this^n; n 超出范围时抛异常.
+  // 返回 this 的 n 次幂,结果精确且首选 scale 为 this.scale() * n
+  // n 必须位于 [0, 999999999],n 为 0 时包括 0^0 均返回 1,scale 溢出时抛出异常
   decimal pow(std::int32_t n) const {
     if (n < 0 || n > 999999999) {
       throw std::invalid_argument("invalid operation");
@@ -9012,7 +9839,9 @@ struct decimal {
     return (cv != INFLATED) ? value_of(cv, new_scale) : value_of(r, new_scale, 0);
   }
 
-  // 返回 this^n,按 math_context 舍入 (ANSI X3.274-1996 算法).
+  // 按 ANSI X3.274-1996 算法返回 this 的 n 次幂,中间结果使用扩展精度并最终按 mc 舍入
+  // n 必须位于 [-999999999, 999999999],负指数计算正指数幂的倒数,mc 精度为 0 时仅允许非负指数
+  // n 的十进制位数超过 mc 精度、结果需要但不允许舍入或除零时抛出异常
   decimal pow(std::int32_t n, const math_context& mc) const {
     if (mc.precision() == 0) {
       return pow(n);
@@ -9034,12 +9863,12 @@ struct decimal {
       }
       workmc = math_context(mc.precision() + elength + 1, mc.get_rounding_mode());
     }
-    // 逐位平方-乘 (忽略最高位); 使用 std::uint32_t 保证 32 位回绕语义.
+    // 逐位平方-乘并忽略最高位,使用 std::uint32_t 保证 32 位回绕语义
     decimal acc = ONE;
     bool seenbit = false;
     for (std::int32_t i = 1;; ++i) {
       mag += mag;               // 左移一位
-      if (mag & 0x80000000u) {  // 最高位为 1.
+      if (mag & 0x80000000u) {  // 最高位为 1
         seenbit = true;
         acc = acc.multiply(lhs, workmc);
       }
@@ -9056,7 +9885,8 @@ struct decimal {
     return do_round_value(acc, mc);  // 舍入到目标精度
   }
 
-  // 返回 this 平方根的近似值,按 context 舍入.
+  // 返回按 mc 精度和舍入模式计算的 this 平方根,结果的首选 scale 为 this.scale() / 2
+  // this 为负数时抛出异常,mc 精度为 0 或模式为 UNNECESSARY 时要求平方根能够精确表示
   decimal sqrt(const math_context& mc) const {
     const std::int32_t sig = signum();
     if (sig < 0) {
@@ -9160,12 +9990,12 @@ struct decimal {
     return result;
   }
 
-  // 转换为 32 位有符号整数; 丢弃小数部分,过大时仅保留低 32 位.
+  // 向零丢弃小数部分并转换为 int32_t,超出范围时仅保留低 32 位,不会抛出 overflow
   std::int32_t to_int() const {
     return static_cast<std::int32_t>((to_long()));
   }
 
-  // 转为 long; 丢弃小数部分, 过大时仅保留低 64 位
+  // 向零丢弃小数部分并转换为 int64_t,超出范围时仅保留低 64 位,不会抛出 overflow
   std::int64_t to_long() const {
     if (int_compact_ != INFLATED && scale_ == 0) {
       return int_compact_;
@@ -9176,12 +10006,12 @@ struct decimal {
     return to_big_integer().long_value();
   }
 
-  // 转为 float; 过大时变为正负无穷, 可能损失精度.
+  // 转换为 float 近似值,可能损失精度或在绝对值过大时返回正负无穷
   float to_float() const {
     return static_cast<float>((to_double()));
   }
 
-  // 转为 double; 过大时变为正负无穷, 可能损失精度.
+  // 转换为 double 近似值,可能损失精度或在绝对值过大时返回正负无穷
   double to_double() const {
     std::string s = to_string();
     char* end = nullptr;
@@ -9189,13 +10019,28 @@ struct decimal {
     return d;
   }
 
-  // 精确转为 long; 有小数部分或超出 long 范围时抛异常.
+  // 精确转换为 int64_t,存在非零小数部分或整数值超出 int64_t 范围时抛出异常
   std::int64_t to_long_exact() const {
+    if (int_compact_ != INFLATED && scale_ == 0) {
+      return int_compact_;
+    }
+    if (signum() == 0) {
+      return 0;
+    }
+    if (fraction_only(*this)) {
+      throw std::runtime_error("rounding necessary");
+    }
+    if (precision() - scale_ > 19) {
+      throw std::runtime_error("overflow");
+    }
     decimal num = set_scale(0, round_mode::UNNECESSARY);
-    return long_overflow_check(num);
+    if (num.precision() >= 19) {
+      return long_overflow_check(num);
+    }
+    return num.int_compact_ != INFLATED ? num.int_compact_ : num.int_val_.long_value();
   }
 
-  // 精确转为 32 位有符号整数; 有小数部分或超出范围时抛异常.
+  // 精确转换为 int32_t,存在非零小数部分或整数值超出 int32_t 范围时抛出异常
   std::int32_t to_int_exact() const {
     std::int64_t v = to_long_exact();
     if (v < INT32_MIN || v > INT32_MAX) {
@@ -9204,7 +10049,7 @@ struct decimal {
     return static_cast<std::int32_t>((v));
   }
 
-  // 精确转为 short; 有小数部分或超出 short 范围时抛异常.
+  // 精确转换为 int16_t,存在非零小数部分或整数值超出 int16_t 范围时抛出异常
   std::int16_t to_short_exact() const {
     std::int64_t v = to_long_exact();
     if (v < INT16_MIN || v > INT16_MAX) {
@@ -9213,7 +10058,7 @@ struct decimal {
     return static_cast<std::int16_t>((v));
   }
 
-  // 精确转为 byte; 有小数部分或超出 byte 范围时抛异常.
+  // 精确转换为 int8_t,存在非零小数部分或整数值超出 int8_t 范围时抛出异常
   std::int8_t to_byte_exact() const {
     std::int64_t v = to_long_exact();
     if (v < INT8_MIN || v > INT8_MAX) {
@@ -9222,12 +10067,13 @@ struct decimal {
     return static_cast<std::int8_t>((v));
   }
 
-  // 返回一个 ulp (末位单位).
+  // 返回 this 当前 scale 对应的末位单位 10^-scale,结果始终为正且与 this 具有相同 scale
   decimal ulp() const {
     return value_of(1, scale_);
   }
 
-  // 返回字符串表示; 需要时使用科学计数法.
+  // 返回规范字符串表示,必要时使用科学计数法并保留能够体现 scale 的尾随零
+  // 相同对象的结果会缓存,该表示可被 decimal 字符串构造函数无损解析
   std::string to_string() const {
     if (!string_cache_.empty()) {
       return string_cache_;
@@ -9240,18 +10086,18 @@ struct decimal {
     return string_cache_;
   }
 
-  // 返回工程计数法字符串; 指数为 3 的倍数
+  // 返回工程计数法字符串,需要指数字段时保证指数为 3 的倍数且整数部分为一至三位
   std::string to_engineering_string() const {
     return layout_chars(false);
   }
 
-  // 返回无指数字段的字符串.
+  // 返回不含指数字段的普通十进制字符串,负 scale 通过在非零未缩放值后补零展开
   std::string to_plain_string() const {
     return get_value_string(int_compact_, int_val_, scale_);
   }
 };
 
-// 预缓存 [0, 10] 的 decimal 常量.
+// 预缓存 [0, 10] 的 decimal 常量
 inline const decimal decimal::ZERO_THROUGH_TEN[11] = {
     decimal(bigint::ZERO, 0, 0, 1),         // 0
     decimal(bigint::ONE, 1, 0, 1),          // 1
@@ -9266,7 +10112,7 @@ inline const decimal decimal::ZERO_THROUGH_TEN[11] = {
     decimal(bigint::TEN, 10, 0, 2),         // 10
 };
 
-// scale 0~15 的零值 decimal 常量.
+// scale 0~15 的零值 decimal 常量
 inline const decimal decimal::ZERO_SCALED_BY[16] = {
     ZERO_THROUGH_TEN[0],              // scale 0
     decimal(bigint::ZERO, 0, 1, 1),   // scale 1
@@ -9286,23 +10132,50 @@ inline const decimal decimal::ZERO_SCALED_BY[16] = {
     decimal(bigint::ZERO, 0, 15, 1),  // scale 15
 };
 
-// 常量 ZERO.
+// 常量 ZERO
 inline const decimal decimal::ZERO = ZERO_THROUGH_TEN[0];
 
-// 常量 ONE.
+// 常量 ONE
 inline const decimal decimal::ONE = ZERO_THROUGH_TEN[1];
 
-// 常量 TWO.
+// 常量 TWO
 inline const decimal decimal::TWO = ZERO_THROUGH_TEN[2];
 
-// 常量 TEN.
+// 常量 TEN
 inline const decimal decimal::TEN = ZERO_THROUGH_TEN[10];
 
-// 常量 0.1, scale 为 1.
+// 常量 0.1,scale 为 1
 inline const decimal decimal::ONE_TENTH = decimal::value_of(1LL, 1);
 
-// 常量 0.5, scale 为 1.
+// 常量 0.5,scale 为 1
 inline const decimal decimal::ONE_HALF = decimal::value_of(5LL, 1);
+
+inline std::int64_t mutable_bigint::to_compact_value(std::int32_t sign) {
+  if (int_len_ == 0 || sign == 0) {
+    return 0;
+  }
+
+  if (int_len_ > 2 || (int_len_ == 2 && (value_[offset_] & UINT32_C(0x80000000)) != 0)) {
+    return decimal::INFLATED;
+  }
+
+  const std::uint64_t magnitude =
+      int_len_ == 2 ? (static_cast<std::uint64_t>(value_[offset_]) << 32) | value_[offset_ + 1] : value_[offset_];
+  const std::int64_t compact = static_cast<std::int64_t>(magnitude);
+  return sign == -1 ? -compact : compact;
+}
+
+inline decimal mutable_bigint::to_decimal(std::int32_t sign, std::int32_t scale) {
+  if (int_len_ == 0 || sign == 0) {
+    return decimal::zero_value_of(scale);
+  }
+
+  const std::int64_t compact = to_compact_value(sign);
+  if (compact != decimal::INFLATED) {
+    return decimal::value_of(compact, scale);
+  }
+  return decimal(bigint(sign, to_int_array()), decimal::INFLATED, scale, 0);
+}
 
 #undef DECIMAL_DETAIL_HAS_FAST_DIV128
 #undef DECIMAL_DETAIL_HAS_MSVC_DIV128
