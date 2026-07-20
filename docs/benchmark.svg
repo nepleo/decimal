@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="990" viewBox="0 0 1200 990" role="img" aria-labelledby="title description">
+<title id="title">C++ decimal benchmark results</title>
+<desc id="description">Geometric mean nanoseconds per operation for sixteen decimal operations.</desc>
+<style>
+  text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1f2328}
+  .heading{font-size:27px;font-weight:650}.subtitle{font-size:14px;fill:#636c76}
+  .meta-label{font-size:11px;font-weight:600;fill:#636c76;letter-spacing:.5px}.meta-value{font-size:14px;font-weight:600}
+  .column{font-size:12px;font-weight:650;fill:#59636e;letter-spacing:.55px}
+  .operation{font:14px ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}
+  .number{font:600 14px ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}
+  .footer{font-size:12px;fill:#636c76}
+</style>
+<rect width="100%" height="100%" rx="10" fill="#ffffff"/>
+<rect x="0.5" y="0.5" width="1199" height="989" rx="10" fill="none" stroke="#d0d7de"/>
+<text class="heading" x="44" y="47">C++ decimal · int64 fast path</text>
+<text class="subtitle" x="44" y="73">6 significant digits · compact int64 · geometric mean ns/op</text>
+<rect x="44" y="95" width="547" height="66" rx="7" fill="#f6f8fa" stroke="#d8dee4"/>
+<text class="meta-label" x="61" y="118">PLATFORM</text>
+<text class="meta-value" x="61" y="144">macOS 13.7.8 · arm64</text>
+<rect x="608" y="95" width="547" height="66" rx="7" fill="#f6f8fa" stroke="#d8dee4"/>
+<text class="meta-label" x="625" y="118">CHIP</text>
+<text class="meta-value" x="625" y="144">Apple M1 Pro · 8 cores</text>
+<rect x="44" y="190" width="1112" height="42" rx="6" fill="#f6f8fa"/>
+<text class="column" x="62" y="216">DECIMAL PUBLIC API</text>
+<text class="column" text-anchor="end" x="1106" y="216">NS / OP</text>
+<g class="operation-row" data-operation="construct_string">
+<line x1="44" y1="232" x2="1156" y2="232" stroke="#d8dee4"/>
+<text class="operation" x="62" y="259">decimal::decimal(const std::string&amp;)</text>
+<text class="number" text-anchor="end" x="1106" y="259">15.40</text>
+</g>
+<rect x="44" y="274" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="add">
+<line x1="44" y1="274" x2="1156" y2="274" stroke="#d8dee4"/>
+<text class="operation" x="62" y="301">decimal::add(const decimal&amp;) const</text>
+<text class="number" text-anchor="end" x="1106" y="301">9.66</text>
+</g>
+<g class="operation-row" data-operation="subtract">
+<line x1="44" y1="316" x2="1156" y2="316" stroke="#d8dee4"/>
+<text class="operation" x="62" y="343">decimal::subtract(const decimal&amp;) const</text>
+<text class="number" text-anchor="end" x="1106" y="343">11.03</text>
+</g>
+<rect x="44" y="358" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="multiply">
+<line x1="44" y1="358" x2="1156" y2="358" stroke="#d8dee4"/>
+<text class="operation" x="62" y="385">decimal::multiply(const decimal&amp;) const</text>
+<text class="number" text-anchor="end" x="1106" y="385">10.01</text>
+</g>
+<g class="operation-row" data-operation="divide_context">
+<line x1="44" y1="400" x2="1156" y2="400" stroke="#d8dee4"/>
+<text class="operation" x="62" y="427">decimal::divide(const decimal&amp;, const math_context&amp;) const</text>
+<text class="number" text-anchor="end" x="1106" y="427">27.77</text>
+</g>
+<rect x="44" y="442" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="divide_scale">
+<line x1="44" y1="442" x2="1156" y2="442" stroke="#d8dee4"/>
+<text class="operation" x="62" y="469">decimal::divide(const decimal&amp;, std::int32_t, round_mode) const</text>
+<text class="number" text-anchor="end" x="1106" y="469">14.37</text>
+</g>
+<g class="operation-row" data-operation="set_scale">
+<line x1="44" y1="484" x2="1156" y2="484" stroke="#d8dee4"/>
+<text class="operation" x="62" y="511">decimal::set_scale(std::int32_t, round_mode) const</text>
+<text class="number" text-anchor="end" x="1106" y="511">20.66</text>
+</g>
+<rect x="44" y="526" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="compare">
+<line x1="44" y1="526" x2="1156" y2="526" stroke="#d8dee4"/>
+<text class="operation" x="62" y="553">decimal::compare_to(const decimal&amp;) const</text>
+<text class="number" text-anchor="end" x="1106" y="553">20.05</text>
+</g>
+<g class="operation-row" data-operation="strip_trailing_zeros">
+<line x1="44" y1="568" x2="1156" y2="568" stroke="#d8dee4"/>
+<text class="operation" x="62" y="595">decimal::strip_trailing_zeros() const</text>
+<text class="number" text-anchor="end" x="1106" y="595">26.43</text>
+</g>
+<rect x="44" y="610" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="pow">
+<line x1="44" y1="610" x2="1156" y2="610" stroke="#d8dee4"/>
+<text class="operation" x="62" y="637">decimal::pow(std::int32_t, const math_context&amp;) const</text>
+<text class="number" text-anchor="end" x="1106" y="637">123.99</text>
+</g>
+<g class="operation-row" data-operation="sqrt">
+<line x1="44" y1="652" x2="1156" y2="652" stroke="#d8dee4"/>
+<text class="operation" x="62" y="679">decimal::sqrt(const math_context&amp;) const</text>
+<text class="number" text-anchor="end" x="1106" y="679">4,819.86</text>
+</g>
+<rect x="44" y="694" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="to_big_integer">
+<line x1="44" y1="694" x2="1156" y2="694" stroke="#d8dee4"/>
+<text class="operation" x="62" y="721">decimal::to_big_integer() const</text>
+<text class="number" text-anchor="end" x="1106" y="721">64.31</text>
+</g>
+<g class="operation-row" data-operation="to_double">
+<line x1="44" y1="736" x2="1156" y2="736" stroke="#d8dee4"/>
+<text class="operation" x="62" y="763">decimal::to_double() const</text>
+<text class="number" text-anchor="end" x="1106" y="763">67.27</text>
+</g>
+<rect x="44" y="778" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="to_string">
+<line x1="44" y1="778" x2="1156" y2="778" stroke="#d8dee4"/>
+<text class="operation" x="62" y="805">decimal::to_string() const</text>
+<text class="number" text-anchor="end" x="1106" y="805">55.27</text>
+</g>
+<g class="operation-row" data-operation="to_engineering">
+<line x1="44" y1="820" x2="1156" y2="820" stroke="#d8dee4"/>
+<text class="operation" x="62" y="847">decimal::to_engineering_string() const</text>
+<text class="number" text-anchor="end" x="1106" y="847">97.50</text>
+</g>
+<rect x="44" y="862" width="1112" height="42" fill="#fbfcfd"/>
+<g class="operation-row" data-operation="to_plain">
+<line x1="44" y1="862" x2="1156" y2="862" stroke="#d8dee4"/>
+<text class="operation" x="62" y="889">decimal::to_plain_string() const</text>
+<text class="number" text-anchor="end" x="1106" y="889">72.95</text>
+</g>
+<text class="footer" x="44" y="938">Lower is better · 4 cases per operation · 3 rounds × 5 samples</text>
+<text class="footer" text-anchor="end" x="1156" y="938">6-digit coefficients × 4 scale profiles</text>
+</svg>

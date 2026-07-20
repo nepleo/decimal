@@ -1,6 +1,7 @@
 # decimal
 
-English | [简体中文](README.zh-CN.md) | [Documentation](https://nepleo.github.io/decimal/)
+English | [简体中文](README.zh-CN.md) | [Documentation](https://nepleo.github.io/decimal/) |
+[HTML preview](https://htmlpreview.github.io/?https://github.com/nepleo/decimal/blob/main/docs/index.html)
 
 [![CI](https://github.com/nepleo/decimal/actions/workflows/ci.yml/badge.svg)](https://github.com/nepleo/decimal/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-346ddb)](https://nepleo.github.io/decimal/)
@@ -112,6 +113,13 @@ architectures use dependency-free portable implementations.
 Define `DECIMAL_DISABLE_INTRINSICS=1` before including the header to force the portable implementation when validating
 a new compiler or target.
 
+## Performance snapshot
+
+This snapshot measures the compact `int64` fast path on macOS 13.7.8 with an Apple M1 Pro. Values are geometric mean
+nanoseconds per operation, and lower is better. Results describe this environment rather than a cross-platform guarantee.
+
+[![C++ decimal benchmark results](docs/benchmark.svg)](docs/benchmark.svg)
+
 ## Documentation
 
 The [online manual](https://nepleo.github.io/decimal/) contains:
@@ -121,6 +129,9 @@ The [online manual](https://nepleo.github.io/decimal/) contains:
 - Guidance for choosing division, conversion, and formatting overloads.
 - Runnable examples for money, exchange rates, CSV input, loans, and exactness checks.
 - Advanced references for `round_mode`, `math_context`, and `bigint`.
+
+If the custom domain is temporarily unavailable, use the
+[HTML preview](https://htmlpreview.github.io/?https://github.com/nepleo/decimal/blob/main/docs/index.html).
 
 ## Building and testing
 
