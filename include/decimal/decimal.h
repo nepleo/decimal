@@ -8710,21 +8710,16 @@ struct decimal {
 #endif
   }
 
-  // 对可能为负的 std::int64_t dividend 和 divisor 执行向零截断除法
-  // 返回值 first 为余数,second 为商,支持最小负数而不触发 abs 溢出
+  // 将负数 n 的二进制表示视为无符号被除数并除以正数 d
+  // 返回值 first 为余数,second 为商,支持最小负数且不依赖有符号溢出
   static std::pair<std::int64_t, std::int64_t> div_rem_negative_long(std::int64_t n, std::int64_t d) {
-    std::int64_t q =
-        static_cast<std::int64_t>(((static_cast<std::uint64_t>((n)) >> 1) / (static_cast<std::uint64_t>((d)) >> 1)));
-    std::int64_t r = n - q * d;
-    while (r < 0) {
-      r += d;
-      q--;
-    }
-    while (r >= d) {
-      r -= d;
-      q++;
-    }
-    return std::pair<std::int64_t, std::int64_t>(r, q);
+    assert(n < 0);
+    assert(d > 1);
+
+    const std::uint64_t dividend = static_cast<std::uint64_t>(n);
+    const std::uint64_t divisor = static_cast<std::uint64_t>(d);
+    return std::pair<std::int64_t, std::int64_t>(static_cast<std::int64_t>(dividend % divisor),
+                                                 static_cast<std::int64_t>(dividend / divisor));
   }
 
   // 返回 unscaled value 为 sign * 10^n 且具有指定 scale 的 decimal
