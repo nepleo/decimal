@@ -74,8 +74,20 @@ bool test_scale_and_layout_helpers() {
   return true;
 }
 
+bool test_div_rem_negative_long() {
+  const auto ordinary = decimal::div_rem_negative_long(INT64_C(-12345), INT64_C(4294967295));
+  CHECK_EQ(ordinary.first, INT64_C(4294954951));
+  CHECK_EQ(ordinary.second, INT64_C(4294967296));
+
+  const auto minimum =
+      decimal::div_rem_negative_long((std::numeric_limits<std::int64_t>::min)(), INT64_C(4294967295));
+  CHECK_EQ(minimum.first, INT64_C(2147483648));
+  CHECK_EQ(minimum.second, INT64_C(2147483648));
+  return true;
+}
+
 bool test_mutable_bridge_helpers() {
-  // TEST_COVERS: compare_magnitude_normalized div_rem_negative_long divide_small_fast_path do_round_128
+  // TEST_COVERS: compare_magnitude_normalized divide_small_fast_path do_round_128
   // TEST_COVERS: long_overflow_check multiply_divide_and_round pre_align rounded_ten_power try_divide_and_round_128
   // TEST_COVERS: try_multiply_divide_and_round
   mutable_bigint magnitude(bigint("12345678901234567890").mag_);
@@ -102,5 +114,8 @@ int main() {
   if (!test_scale_and_layout_helpers()) {
     return 3;
   }
-  return test_mutable_bridge_helpers() ? 0 : 4;
+  if (!test_div_rem_negative_long()) {
+    return 4;
+  }
+  return test_mutable_bridge_helpers() ? 0 : 5;
 }
